@@ -21,7 +21,10 @@ that the web UI, queue workers and provider integrations will call into. No UI y
 | CSV export | `src/export/csv.ts` | deterministic, documented columns, formula-injection safe |
 | Delivery | `src/delivery/` | email + WhatsApp (template, opt-in), finalized-only, signed expiring links, resend audited |
 | Audit log | `src/audit.ts` | append-only, hash-chained |
-| Database | `db/schema.sql` | PostgreSQL; idempotency unique key, closed-period triggers, frozen statements, append-only audit |
+| Database | `db/migrations/*.sql` | PostgreSQL; idempotency unique key, closed-period triggers, frozen statements, append-only audit |
+| Data layer | `src/db/`, `src/repo/` | `pg` pool, `withTx`, migration runner; org-scoped repositories for owners, properties, commission rules, periods, expenses, earnings, statements, deliveries, dashboard |
+| Services | `src/services/` | `previewCsvImport` / `confirmCsvImport`, `generateStatements` / `finalizePeriod`, `sendStatement` — each is one atomic transaction |
+| Persistent audit | `src/repo/audit.ts` | Per-org hash chain written under an advisory lock; `verifyAuditChain` detects tampering |
 
 ## Design decisions
 
@@ -46,14 +49,24 @@ that the web UI, queue workers and provider integrations will call into. No UI y
 
 ```
 npm install
-npm test          # node:test, zero runtime dependencies (Node ≥ 22.18)
+npm test               # unit tests (no database needed; Node ≥ 22.18)
+npm run test:db        # integration tests against real Postgres (boots a throwaway cluster, or set TEST_DATABASE_URL)
 npm run typecheck
-psql -f db/schema.sql   # requires btree_gist and pgcrypto
+DATABASE_URL=postgres://… npm run migrate   # applies db/migrations in order; idempotent (needs btree_gist, pgcrypto)
 ```
 
-Tests cover import, duplicate detection, expenses, commission, statements, period locking, CSV, delivery, audit, signed links, and the
+### Data-layer rules
+- Every write takes a `Tx` from `withTx`; reads accept a `Pool`. Every query is scoped by `organization_id`.
+- Money is `bigint` cents in Postgres, parsed to JS numbers (error if outside the safe-integer range). `date` columns stay `'YYYY-MM-DD'` strings.
+- `confirmCsvImport` re-validates the file against live DB state inside its transaction and serialises per org; it never trusts a previous preview.
+- `finalizePeriod` regenerates statements in the same transaction it locks them in, so the locked numbers are the current numbers.
+- Corrections to closed months: `reverseExpense` posts a negating entry into an open month. Direct edits are blocked in the app **and** by DB triggers.
+- `sendStatement` calls the email/WhatsApp provider outside a DB transaction and records outcomes (including failures) afterwards. A crash
+  between send and record could leave a sent email unrecorded; a `QUEUED`-first outbox with the job queue closes that gap.
+
+Unit tests cover import, duplicate detection, expenses, commission, statements, period locking, CSV, delivery, audit, signed links, and the
 acceptance scenario ($6,000 − $500 − $100 − $200 − 20% = **$4,000**).
 
 ## Not built yet (next)
-Web app + auth/RBAC/CSRF/rate limiting, Postgres repositories and transactional job queue, PDF rendering, S3 receipt storage, real
+Web app + auth/RBAC/CSRF/rate limiting, job queue/outbox, PDF rendering, S3 receipt storage, real
 email/WhatsApp provider adapters + delivery webhooks, annual report generator, owner portal (Phase 2).

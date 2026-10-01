@@ -60,8 +60,14 @@ export function previewImport(filename: string, parsed: ParseResult, ctx: Import
 export interface StoredEarnings extends EarningsRecord { propertyId: string; importBatchId: string; idempotencyKey: string }
 export interface ImportStore {
   /** Must be atomic (single DB transaction) and enforce UNIQUE(idempotency_key). */
-  commitBatch(batch: { id: string; filename: string; importedBy: string; recordCount: number; failedCount: number }, rows: StoredEarnings[]): Promise<void>;
+  commitBatch(
+    batch: { id: string; filename: string; importedBy: string; recordCount: number; failedCount: number },
+    rows: StoredEarnings[],
+    /** Unmatched / period-locked rows, persisted so they remain visible as exceptions. */
+    rejected: RejectedRow[],
+  ): Promise<void>;
 }
+export interface RejectedRow { status: 'UNMATCHED_PROPERTY' | 'PERIOD_LOCKED'; record: EarningsRecord; idempotencyKey: string }
 export interface ImportResult { batchId: string; imported: number; skipped: number }
 
 /**
@@ -79,6 +85,8 @@ export async function commitImport(
   }));
   const skipped = preview.rows.length - ready.length;
   await store.commitBatch(
-    { id: opts.batchId, filename: preview.filename, importedBy: opts.userId, recordCount: preview.rows.length, failedCount: skipped }, rows);
+    { id: opts.batchId, filename: preview.filename, importedBy: opts.userId, recordCount: preview.rows.length, failedCount: skipped }, rows,
+    preview.rows.flatMap((r): RejectedRow[] => (r.status === 'UNMATCHED_PROPERTY' || r.status === 'PERIOD_LOCKED'
+      ? [{ status: r.status, record: r.record, idempotencyKey: r.idempotencyKey }] : [])));
   return { batchId: opts.batchId, imported: rows.length, skipped };
 }
