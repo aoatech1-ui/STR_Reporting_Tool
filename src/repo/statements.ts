@@ -56,3 +56,10 @@ export async function loadStatements(db: Db, orgId: string, f: { id?: string; ye
     [orgId, f.id ?? null, f.year ?? null, f.throughMonth ?? null, f.periodId ?? null, f.ownerId ?? null, f.propertyId ?? null, f.statuses ?? null]);
   return r.rows.map(map);
 }
+
+/** For the public signed-link route, which has no session: resolves the owning organization of a statement id. */
+export async function statementOrg(db: Db, id: string): Promise<string | null> {
+  if (!/^[0-9a-f-]{36}$/i.test(id)) return null;
+  const r = await db.query('SELECT organization_id FROM owner_statements WHERE id=$1', [id]);
+  return r.rows[0]?.organization_id ?? null;
+}

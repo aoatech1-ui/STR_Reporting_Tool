@@ -1,3 +1,4 @@
+import { UserError } from '../errors.ts';
 export type PeriodStatus = 'DRAFT' | 'REVIEW' | 'FINALIZED' | 'LOCKED';
 export interface AccountingPeriod { id: string; year: number; month: number; status: PeriodStatus }
 
@@ -11,15 +12,15 @@ export const isClosed = (p: Pick<AccountingPeriod, 'status'>) => p.status === 'F
 
 /** Throws if financial records in this period may not be changed directly. Corrections go through adjustments. */
 export function assertEditable(p: AccountingPeriod): void {
-  if (isClosed(p)) throw new Error(`Period ${periodKey(p.year, p.month)} is ${p.status}; use an adjustment/reversal in an open period`);
+  if (isClosed(p)) throw new UserError(`Period ${periodKey(p.year, p.month)} is ${p.status}; use an adjustment/reversal in an open period`);
 }
 
 export interface TransitionOpts { criticalExceptions?: number; managerAcknowledged?: boolean }
 
 export function transition(p: AccountingPeriod, to: PeriodStatus, opts: TransitionOpts = {}): AccountingPeriod {
-  if (!NEXT[p.status].includes(to)) throw new Error(`Illegal period transition ${p.status} → ${to}`);
+  if (!NEXT[p.status].includes(to)) throw new UserError(`Illegal period transition ${p.status} → ${to}`);
   if (to === 'FINALIZED' && (opts.criticalExceptions ?? 0) > 0 && !opts.managerAcknowledged) {
-    throw new Error(`${opts.criticalExceptions} critical exception(s) require manager review before finalizing`);
+    throw new UserError(`${opts.criticalExceptions} critical exception(s) require manager review before finalizing`);
   }
   return { ...p, status: to };
 }

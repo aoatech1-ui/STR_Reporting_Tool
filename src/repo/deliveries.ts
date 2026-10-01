@@ -1,11 +1,11 @@
 import type { Db, Tx } from '../db/pool.ts';
 import type { DeliveryRecord, DeliveryStatus } from '../delivery/delivery.ts';
 
-export async function insertDelivery(tx: Tx, r: DeliveryRecord): Promise<string> {
+/** Outbox row. Always starts QUEUED; the worker moves it to SENT/FAILED. */
+export async function insertQueuedDelivery(tx: Tx, orgId: string, userId: string, d: { statementId: string; channel: 'EMAIL' | 'WHATSAPP'; recipient: string; resend: boolean; templateId?: string }): Promise<string> {
   const x = await tx.query(
-    `INSERT INTO statement_deliveries(statement_id, channel, recipient, status, provider_message_id, template_id, resend, sent_at, failure_reason)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
-    [r.statementId, r.channel, r.recipient, r.status, r.providerMessageId, r.templateId ?? null, r.resend, r.sentAt, r.error ?? null]);
+    `INSERT INTO statement_deliveries(organization_id, statement_id, channel, recipient, status, template_id, resend, requested_by)
+     VALUES ($1,$2,$3,$4,'QUEUED',$5,$6,$7) RETURNING id`, [orgId, d.statementId, d.channel, d.recipient, d.templateId ?? null, d.resend, userId]);
   return x.rows[0].id;
 }
 

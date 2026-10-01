@@ -1,6 +1,7 @@
 import type { Db, Tx } from '../db/pool.ts';
 import { transition, type AccountingPeriod, type PeriodStatus, type TransitionOpts } from '../accounting/period.ts';
 import { appendAudit } from './audit.ts';
+import { UserError } from '../errors.ts';
 
 export interface PeriodRow extends AccountingPeriod { startDate: string; endDate: string; finalizedAt: string | null }
 
@@ -14,7 +15,7 @@ const map = (x: any): PeriodRow => ({ id: x.id, year: x.year, month: x.month, st
   finalizedAt: x.finalized_at ? new Date(x.finalized_at).toISOString() : null });
 
 export async function getOrCreatePeriod(tx: Tx, orgId: string, year: number, month: number, lock = false): Promise<PeriodRow> {
-  if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) throw new Error('Invalid accounting month');
+  if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) throw new UserError('Invalid accounting month');
   const { start, end } = monthRange(year, month);
   await tx.query(
     `INSERT INTO accounting_periods(organization_id, year, month, start_date, end_date) VALUES ($1,$2,$3,$4,$5)

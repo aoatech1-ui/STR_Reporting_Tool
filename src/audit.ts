@@ -14,7 +14,7 @@ export function chainHash(e: AuditEntry, seq: number, prevHash: string): string 
 }
 
 export interface AuditEntry {
-  userId: string; action: string; entityType: string; entityId: string;
+  userId: string | null; action: string; entityType: string; entityId: string;
   oldValue: unknown; newValue: unknown; at: string; meta?: { ip?: string; userAgent?: string };
 }
 export interface StoredAudit extends AuditEntry { seq: number; prevHash: string; hash: string }

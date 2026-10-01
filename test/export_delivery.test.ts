@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { annualOwnerCsv, managerCommissionCsv, monthlyStatementCsv, monthlyTransactionCsv } from '../src/export/csv.ts';
 import { buildStatement } from '../src/accounting/statement.ts';
-import { deliverStatement, type DeliveryDeps, type DeliveryTarget } from '../src/delivery/delivery.ts';
+import { composeEmail, composeWhatsApp, planDeliveries, type DeliveryTarget } from '../src/delivery/delivery.ts';
 import { signLink, verifyLink } from '../src/delivery/links.ts';
 import { AuditLog } from '../src/audit.ts';
 import { csvCell, parseCsv } from '../src/csv.ts';
@@ -55,42 +55,35 @@ test('audit log is hash-chained and detects tampering', () => {
 const target = (o: Partial<DeliveryTarget> = {}): DeliveryTarget => ({ statementId: 'st1', statementStatus: 'FINALIZED', propertyName: '123 Main Street',
   monthLabel: 'September 2026', ownerProceedsCents: 400000,
   owner: { emails: ['john@example.com'], emailEnabled: true, whatsappPhone: '+15550001', whatsappEnabled: true, whatsappOptIn: true }, ...o });
-const deps = (o: Partial<DeliveryDeps> = {}) => {
-  const sent = { email: [] as any[], wa: [] as any[] };
-  const d: DeliveryDeps = { email: { async send(m) { sent.email.push(m); return { messageId: 'em1' }; } },
-    whatsapp: { async sendTemplate(m) { sent.wa.push(m); return { messageId: 'wa1' }; } },
-    audit: new AuditLog(), linkSecret: 's', baseUrl: 'https://x.test', now: () => 1000, userId: 'u', existing: [], ...o };
-  return { d, sent };
-};
 
-test('never sends before finalization', async () => {
-  const { d, sent } = deps();
-  await assert.rejects(() => deliverStatement(target({ statementStatus: 'REVIEW' }), d), /after finalization/);
-  assert.equal(sent.email.length + sent.wa.length, 0);
+test('never plans a send before finalization', () => {
+  assert.throws(() => planDeliveries(target({ statementStatus: 'REVIEW' }), []), /after finalization/);
+  assert.throws(() => planDeliveries(target({ statementStatus: 'DRAFT' }), []), /after finalization/);
 });
 
-test('email + WhatsApp delivery records, audit trail, and WhatsApp omits amounts by default', async () => {
-  const { d, sent } = deps();
-  const recs = await deliverStatement(target(), d);
-  assert.deepEqual(recs.map((r) => [r.channel, r.status, r.providerMessageId]), [['EMAIL', 'SENT', 'em1'], ['WHATSAPP', 'SENT', 'wa1']]);
-  assert.match(sent.email[0].text, /\$4,000\.00/);
-  assert.ok(!sent.wa[0].params.some((p: string) => p.includes('$')));
-  assert.match(sent.wa[0].params.at(-1), /^https:\/\/x\.test\/s\//);
-  assert.equal(d.audit.all().length, 2);
+test('plans email + WhatsApp; WhatsApp requires opt-in; unavailable channels are skipped', () => {
+  assert.deepEqual(planDeliveries(target(), []).map((p) => p.channel), ['EMAIL', 'WHATSAPP']);
+  assert.deepEqual(planDeliveries(target({ owner: { ...target().owner, whatsappOptIn: false } }), []).map((p) => p.channel), ['EMAIL']);
+  assert.deepEqual(planDeliveries(target(), [], { whatsappAvailable: false }).map((p) => p.channel), ['EMAIL']);
+  assert.deepEqual(planDeliveries(target(), [], { emailAvailable: false }).map((p) => p.channel), ['WHATSAPP']);
+  const two = planDeliveries(target({ owner: { ...target().owner, emails: ['a@x.com', 'b@x.com'] } }), []);
+  assert.equal(two[0].recipient, 'a@x.com,b@x.com');
 });
 
-test('WhatsApp requires opt-in; duplicates need explicit resend; failures are recorded', async () => {
-  const noOptIn = deps();
-  const r1 = await deliverStatement(target({ owner: { ...target().owner, whatsappOptIn: false } }), noOptIn.d);
-  assert.deepEqual(r1.map((r) => r.channel), ['EMAIL']);
+test('a live delivery blocks duplicates (incl. QUEUED); failed/bounced do not; resend overrides', () => {
+  const ex = (status: any) => [{ statementId: 'st1', channel: 'EMAIL' as const, status }];
+  for (const s of ['QUEUED', 'SENT', 'DELIVERED']) assert.ok(!planDeliveries(target(), ex(s)).some((p) => p.channel === 'EMAIL'), s);
+  for (const s of ['FAILED', 'BOUNCED']) assert.ok(planDeliveries(target(), ex(s)).some((p) => p.channel === 'EMAIL'), s);
+  assert.ok(planDeliveries(target(), ex('DELIVERED'), { resend: true }).some((p) => p.channel === 'EMAIL'));
+});
 
-  const prior = deps({ existing: r1 });
-  assert.equal((await deliverStatement(target({ owner: { ...target().owner, whatsappEnabled: false } }), prior.d)).length, 0);
-  const resent = await deliverStatement(target({ owner: { ...target().owner, whatsappEnabled: false } }), prior.d, { resend: true });
-  assert.equal(resent[0].resend, true);
-  assert.equal(prior.d.audit.all()[0].action, 'STATEMENT_RESENT');
-
-  const failing = deps({ email: { async send() { throw new Error('boom'); } } });
-  const f = await deliverStatement(target(), failing.d);
-  assert.deepEqual([f[0].status, f[0].error], ['FAILED', 'boom']);
+test('email is escaped; WhatsApp omits amounts unless opted in', () => {
+  const e = composeEmail({ monthLabel: 'September 2026', propertyName: '<b>Evil & Co</b>', ownerProceedsCents: 400000 }, 'https://x.test/s/t?a=1&b="2"');
+  assert.match(e.text, /\$4,000\.00/);
+  assert.ok(!e.html.includes('<b>Evil'));
+  assert.match(e.html, /&lt;b&gt;Evil &amp; Co&lt;\/b&gt;/);
+  assert.match(e.html, /a=1&amp;b=&quot;2&quot;/);
+  assert.equal(e.subject.includes('\n'), false);
+  assert.ok(!composeWhatsApp(target(), 'https://x.test/s/t').params.some((p) => p.includes('$')));
+  assert.ok(composeWhatsApp(target(), 'https://x.test/s/t', true).params.includes('$4,000.00'));
 });

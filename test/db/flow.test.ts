@@ -3,20 +3,17 @@ import assert from 'node:assert/strict';
 import { withTx, type Pool } from '../../src/db/pool.ts';
 import { confirmCsvImport, previewCsvImport } from '../../src/services/import.ts';
 import { finalizePeriod, generateStatements } from '../../src/services/close.ts';
-import { sendStatement } from '../../src/services/send.ts';
 import { createExpense, deleteExpense, listExpenses, reverseExpense, updateExpense } from '../../src/repo/expenses.ts';
 import { listAudit, verifyAuditChain } from '../../src/repo/audit.ts';
 import { loadStatements } from '../../src/repo/statements.ts';
 import { getDashboard } from '../../src/repo/dashboard.ts';
-import { applyDeliveryWebhook, listDeliveries } from '../../src/repo/deliveries.ts';
 import { createProperty, listRules, setCommissionRule } from '../../src/repo/properties.ts';
 import { getPeriod } from '../../src/repo/periods.ts';
 import { monthlyStatementCsv } from '../../src/export/csv.ts';
 import { computeYtd } from '../../src/accounting/statement.ts';
-import { verifyLink } from '../../src/delivery/links.ts';
 import { CSV, freshDb, seed, skip } from './helper.ts';
 
-describe('Postgres data layer: import → expenses → close → send', { skip }, () => {
+describe('Postgres data layer: import → expenses → close', { skip }, () => {
   let pool: Pool, close: () => Promise<void>, s: Awaited<ReturnType<typeof seed>>;
   before(async () => { ({ pool, close } = await freshDb()); s = await seed(pool); });
   after(async () => { await close(); });
@@ -103,47 +100,6 @@ describe('Postgres data layer: import → expenses → close → send', { skip }
     assert.equal(row.amountCents, -orig.amountCents);
     assert.equal(row.reverses, orig.id);
     assert.equal((await pool.query('SELECT count(*)::int AS n FROM expenses WHERE id=$1 AND amount_cents=$2', [orig.id, orig.amountCents])).rows[0].n, 1);
-  });
-
-  const fakeProviders = () => {
-    const sent: any[] = [];
-    return { sent, deps: { email: { async send(m: any) { sent.push(m); return { messageId: 'em-1' }; } },
-      whatsapp: { async sendTemplate(m: any) { sent.push(m); return { messageId: 'wa-1' }; } }, linkSecret: 'sec', baseUrl: 'https://app.test', now: () => Date.now() } };
-  };
-
-  test('delivery: persisted records, link verifies, no duplicate without resend, webhook advances status', async () => {
-    const [st] = await loadStatements(pool, s.orgId, { statuses: ['FINALIZED'] });
-    const { sent, deps } = fakeProviders();
-    const recs = await sendStatement(pool, s.orgId, s.userId, st.id, deps);
-    assert.deepEqual(recs.map((r) => [r.channel, r.status]), [['EMAIL', 'SENT'], ['WHATSAPP', 'SENT']]);
-    const url = sent[0].text.match(/https:\/\/app\.test\/s\/(\S+)/)![1];
-    assert.deepEqual(verifyLink(url, 'sec', Date.now()), { ok: true, statementId: st.id });
-
-    assert.equal((await sendStatement(pool, s.orgId, s.userId, st.id, deps)).length, 0);
-    const re = await sendStatement(pool, s.orgId, s.userId, st.id, deps, { resend: true });
-    assert.ok(re.every((r) => r.resend));
-    assert.equal((await listDeliveries(pool, st.id)).length, 4);
-
-    assert.equal(await withTx(pool, (tx) => applyDeliveryWebhook(tx, 'em-1', 'DELIVERED')), true);
-    assert.ok((await listDeliveries(pool, st.id)).some((d) => d.status === 'DELIVERED'));
-    const actions = (await listAudit(pool, s.orgId, { entityId: st.id })).map((a) => a.action);
-    assert.ok(actions.includes('STATEMENT_SENT') && actions.includes('STATEMENT_RESENT') && actions.includes('STATEMENT_FINALIZED'));
-  });
-
-  test('delivery failure is recorded and surfaces on the dashboard', async () => {
-    const [st] = await loadStatements(pool, s.orgId, { statuses: ['FINALIZED'] });
-    const deps = { email: { async send() { throw new Error('smtp down'); } }, whatsapp: { async sendTemplate() { return { messageId: 'x' }; } }, linkSecret: 's', baseUrl: 'https://a.test' };
-    const r = await sendStatement(pool, s.orgId, s.userId, st.id, deps, { resend: true });
-    assert.equal(r.find((x) => x.channel === 'EMAIL')!.status, 'FAILED');
-    // an earlier successful EMAIL exists, so this failure is not an open problem
-    assert.equal((await getDashboard(pool, s.orgId, 2026, 9)).failedDeliveries, 0);
-  });
-
-  test('unfinalized statements cannot be sent', async () => {
-    const o = await seed(pool);
-    await generateStatements(pool, o.orgId, o.userId, 2026, 8);
-    const [st] = await loadStatements(pool, o.orgId, { year: 2026 });
-    await assert.rejects(() => sendStatement(pool, o.orgId, o.userId, st.id, fakeProviders().deps), /after finalization/);
   });
 
   test('commission change is forward-only; history keeps its snapshot; overlap impossible', async () => {

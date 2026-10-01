@@ -1,6 +1,7 @@
 import type { Db, Tx } from '../db/pool.ts';
 import type { CommissionRule, CommissionType } from '../accounting/commission.ts';
 import { appendAudit } from './audit.ts';
+import { UserError } from '../errors.ts';
 
 export interface PropertyInput {
   name: string; ownerId: string; address?: string; city?: string; state?: string; zip?: string;
@@ -16,9 +17,9 @@ const map = (x: any): Property => ({ id: x.id, name: x.name, ownerId: x.owner_id
 const SELECT = `SELECT p.*, po.owner_id FROM properties p JOIN property_owners po ON po.property_id = p.id AND po.is_primary`;
 
 export async function createProperty(tx: Tx, orgId: string, userId: string, p: PropertyInput): Promise<string> {
-  if (!p.name?.trim()) throw new Error('Property name is required');
+  if (!p.name?.trim()) throw new UserError('Property name is required');
   const owner = await tx.query('SELECT 1 FROM owners WHERE id=$1 AND organization_id=$2', [p.ownerId, orgId]);
-  if (!owner.rowCount) throw new Error('Owner not found');
+  if (!owner.rowCount) throw new UserError('Owner not found');
   const r = await tx.query(
     `INSERT INTO properties(organization_id, name, address, city, state, zip, airbnb_listing_id, airbnb_listing_name, management_start_date, management_end_date, notes)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`,
@@ -59,14 +60,14 @@ export type NewRule = Omit<CommissionRule, 'id' | 'effectiveTo'>;
  * Past rules (and the calculations that snapshot them) are untouched.
  */
 export async function setCommissionRule(tx: Tx, orgId: string, userId: string, propertyId: string, rule: NewRule): Promise<string> {
-  if (rule.rateBps < 0 || rule.rateBps > 10000 || rule.fixedCents < 0) throw new Error('Invalid commission rate or amount');
-  if (rule.type === 'FIXED' && rule.fixedCents === 0) throw new Error('Fixed commission needs an amount');
-  if ((rule.type === 'PERCENT_GROSS' || rule.type === 'PERCENT_NET') && rule.rateBps === 0) throw new Error('Percent commission needs a rate');
+  if (rule.rateBps < 0 || rule.rateBps > 10000 || rule.fixedCents < 0) throw new UserError('Invalid commission rate or amount');
+  if (rule.type === 'FIXED' && rule.fixedCents === 0) throw new UserError('Fixed commission needs an amount');
+  if ((rule.type === 'PERCENT_GROSS' || rule.type === 'PERCENT_NET') && rule.rateBps === 0) throw new UserError('Percent commission needs a rate');
   const prop = await tx.query('SELECT 1 FROM properties WHERE id=$1 AND organization_id=$2 FOR UPDATE', [propertyId, orgId]);
-  if (!prop.rowCount) throw new Error('Property not found');
+  if (!prop.rowCount) throw new UserError('Property not found');
   const open = (await tx.query('SELECT * FROM commission_rules WHERE property_id=$1 AND active AND effective_to IS NULL', [propertyId])).rows[0];
   if (open) {
-    if (open.effective_from >= rule.effectiveFrom) throw new Error('New rule must start after the current rule starts');
+    if (open.effective_from >= rule.effectiveFrom) throw new UserError('New rule must start after the current rule starts');
     await tx.query(`UPDATE commission_rules SET effective_to = ($2::date - 1) WHERE id=$1`, [open.id, rule.effectiveFrom]);
   }
   const r = await tx.query(

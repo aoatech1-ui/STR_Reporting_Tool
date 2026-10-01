@@ -2,7 +2,8 @@
 # Runs the DB integration tests. Uses TEST_DATABASE_URL if set; otherwise boots a throwaway local Postgres cluster.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-run() { node --test test/db/*.test.ts; }
+FILES=("$@"); [ ${#FILES[@]} -gt 0 ] || FILES=(test/db/*.test.ts)
+run() { node --test "${FILES[@]}"; }
 if [ -n "${TEST_DATABASE_URL:-}" ]; then run; exit $?; fi
 
 BIN=$(ls -d /usr/lib/postgresql/*/bin 2>/dev/null | tail -1 || true)

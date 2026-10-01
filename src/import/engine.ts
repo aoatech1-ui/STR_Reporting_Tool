@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { EarningsRecord, ParseResult, RowIssue } from '../providers/types.ts';
+import { UserError } from '../errors.ts';
 
 export interface PropertyRef { id: string; name: string; airbnbListingId?: string | null; airbnbListingName?: string | null }
 
@@ -77,8 +78,8 @@ export interface ImportResult { batchId: string; imported: number; skipped: numb
 export async function commitImport(
   preview: ImportPreview, opts: { confirmed: boolean; batchId: string; userId: string }, store: ImportStore,
 ): Promise<ImportResult> {
-  if (!opts.confirmed) throw new Error('Import requires explicit manager confirmation');
-  if (preview.headerErrors.length) throw new Error(`Cannot import: ${preview.headerErrors.join('; ')}`);
+  if (!opts.confirmed) throw new UserError('Import requires explicit manager confirmation');
+  if (preview.headerErrors.length) throw new UserError(`Cannot import: ${preview.headerErrors.join('; ')}`);
   const ready = preview.rows.filter((r) => r.status === 'READY');
   const rows: StoredEarnings[] = ready.map((r) => ({
     ...r.record, propertyId: r.propertyId!, importBatchId: opts.batchId, idempotencyKey: r.idempotencyKey,

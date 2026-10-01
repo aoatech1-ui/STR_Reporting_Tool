@@ -8,14 +8,23 @@
     "test": "node --test test/*.test.ts",
     "typecheck": "tsc --noEmit",
     "test:db": "bash scripts/test-db.sh",
-    "migrate": "node src/db/migrate.ts"
+    "migrate": "node src/db/migrate.ts",
+    "start": "node src/server/main.ts",
+    "worker": "node src/worker/main.ts",
+    "create-admin": "node src/cli/create-admin.ts"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "@types/nodemailer": "^8.0.2",
     "@types/pg": "^8.23.1",
     "typescript": "^5.6.0"
   },
   "dependencies": {
-    "pg": "^8.23.1"
+    "@fastify/cookie": "^11.1.2",
+    "@fastify/rate-limit": "^11.2.0",
+    "fastify": "^5.12.5",
+    "nodemailer": "^10.0.13",
+    "pg": "^8.23.1",
+    "zod": "^4.6.5"
   }
 }

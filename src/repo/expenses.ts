@@ -4,6 +4,7 @@ import type { ExpenseInput } from '../accounting/statement.ts';
 import { appendAudit } from './audit.ts';
 import { getOrCreateCategory } from './orgs.ts';
 import { getOrCreatePeriod } from './periods.ts';
+import { UserError } from '../errors.ts';
 
 export interface NewExpense {
   propertyId: string; date: string; vendor: string; description?: string; category: string;
@@ -16,10 +17,10 @@ export interface ExpenseRow extends ExpenseInput { propertyId: string; ownerId: 
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 function validate(e: NewExpense) {
-  if (!Number.isInteger(e.amountCents) || (e.taxCents !== undefined && !Number.isInteger(e.taxCents))) throw new Error('Amounts must be whole cents');
-  if (e.amountCents === 0) throw new Error('Expense amount cannot be zero');
-  if (!DATE.test(e.date) || isNaN(Date.parse(e.date))) throw new Error('Invalid expense date');
-  if (!e.vendor?.trim()) throw new Error('Vendor is required');
+  if (!Number.isInteger(e.amountCents) || (e.taxCents !== undefined && !Number.isInteger(e.taxCents))) throw new UserError('Amounts must be whole cents');
+  if (e.amountCents === 0) throw new UserError('Expense amount cannot be zero');
+  if (!DATE.test(e.date) || isNaN(Date.parse(e.date))) throw new UserError('Invalid expense date');
+  if (!e.vendor?.trim()) throw new UserError('Vendor is required');
 }
 
 const map = (x: any): ExpenseRow => ({ id: x.id, date: x.expense_date, vendor: x.vendor, description: x.description ?? '', category: x.category,
@@ -32,7 +33,7 @@ export async function createExpense(tx: Tx, orgId: string, userId: string, e: Ne
   validate(e);
   const prop = await tx.query(`SELECT po.owner_id FROM properties p JOIN property_owners po ON po.property_id=p.id AND po.is_primary
     WHERE p.id=$1 AND p.organization_id=$2`, [e.propertyId, orgId]);
-  if (!prop.rowCount) throw new Error('Property not found');
+  if (!prop.rowCount) throw new UserError('Property not found');
   const ym = e.accountingMonth ?? e.date.slice(0, 7);
   const { year, month } = periodOf(`${ym}-01`);
   const period = await getOrCreatePeriod(tx, orgId, year, month, true);
@@ -63,7 +64,7 @@ export async function listExpenses(db: Db, orgId: string, f: { periodId?: string
 /** Editable only while the period is open. Closed periods need reverseExpense() in an open period. */
 export async function updateExpense(tx: Tx, orgId: string, userId: string, id: string, patch: Partial<Pick<NewExpense, 'vendor' | 'description' | 'category' | 'amountCents' | 'taxCents' | 'ownerPaid' | 'notes' | 'reimbursable'>>): Promise<void> {
   const cur = (await tx.query(`${SELECT} WHERE e.id=$1 AND e.organization_id=$2 FOR UPDATE OF e`, [id, orgId])).rows[0];
-  if (!cur) throw new Error('Expense not found');
+  if (!cur) throw new UserError('Expense not found');
   const period = (await tx.query('SELECT id, year, month, status FROM accounting_periods WHERE id=$1 FOR UPDATE', [cur.accounting_period_id])).rows[0];
   assertEditable(period);
   const before = map(cur);
@@ -78,7 +79,7 @@ export async function updateExpense(tx: Tx, orgId: string, userId: string, id: s
 
 export async function deleteExpense(tx: Tx, orgId: string, userId: string, id: string): Promise<void> {
   const cur = (await tx.query(`${SELECT} WHERE e.id=$1 AND e.organization_id=$2 FOR UPDATE OF e`, [id, orgId])).rows[0];
-  if (!cur) throw new Error('Expense not found');
+  if (!cur) throw new UserError('Expense not found');
   const period = (await tx.query('SELECT id, year, month, status FROM accounting_periods WHERE id=$1 FOR UPDATE', [cur.accounting_period_id])).rows[0];
   assertEditable(period);
   await tx.query('DELETE FROM expenses WHERE id=$1', [id]);
@@ -88,8 +89,8 @@ export async function deleteExpense(tx: Tx, orgId: string, userId: string, id: s
 /** Correction path for a closed period: posts the negated expense into an OPEN accounting month. */
 export async function reverseExpense(tx: Tx, orgId: string, userId: string, id: string, intoMonth: string, reason: string): Promise<string> {
   const orig = await getExpense(tx, orgId, id);
-  if (!orig) throw new Error('Expense not found');
-  if (!reason?.trim()) throw new Error('A reason is required for a reversal');
+  if (!orig) throw new UserError('Expense not found');
+  if (!reason?.trim()) throw new UserError('A reason is required for a reversal');
   const newId = await createExpense(tx, orgId, userId, { propertyId: orig.propertyId, date: `${intoMonth}-01`, vendor: orig.vendor,
     description: `Reversal of ${id}: ${reason}`, category: orig.category, amountCents: -orig.amountCents, taxCents: -orig.taxCents,
     ownerPaid: orig.ownerPaid, accountingMonth: intoMonth });

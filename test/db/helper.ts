@@ -37,3 +37,16 @@ export const CSV = `Date,Type,Confirmation Code,Start Date,End Date,Listing,Curr
 09/12/2026,Reservation,HM2,09/08/2026,09/12/2026,123 Main Street,USD,1150.00,50.00,0.00,1200.00,0.00
 09/21/2026,Reservation,HM9,09/18/2026,09/20/2026,Mystery Cabin,USD,300.00,10.00,0.00,310.00,0.00
 `;
+
+import { confirmCsvImport } from '../../src/services/import.ts';
+import { finalizePeriod } from '../../src/services/close.ts';
+import { loadStatements } from '../../src/repo/statements.ts';
+
+/** Seeds an org, imports September, and finalizes it. Returns ids of the finalized John Smith statement. */
+export async function finalizedOrg(pool: Pool) {
+  const s = await seed(pool);
+  await confirmCsvImport(pool, s.orgId, s.userId, 'sep.csv', CSV, true);
+  await finalizePeriod(pool, s.orgId, s.userId, 2026, 9, { acknowledgeCritical: true });
+  const [st] = await loadStatements(pool, s.orgId, { statuses: ['FINALIZED'] });
+  return { ...s, statementId: st.id };
+}

@@ -10,6 +10,7 @@ import { getOwner } from '../repo/owners.ts';
 import { getOrCreatePeriod, setPeriodStatus, type PeriodRow } from '../repo/periods.ts';
 import { listManagedProperties, listRules } from '../repo/properties.ts';
 import { deleteDraftStatements, finalizeStatements, insertDraftStatement } from '../repo/statements.ts';
+import { UserError } from '../errors.ts';
 
 export interface DraftResult { statements: { id: string; statement: Statement }[]; exceptions: ExceptionItem[] }
 
@@ -60,7 +61,7 @@ export async function finalizePeriod(pool: Pool, orgId: string, userId: string, 
   return withTx(pool, async (tx) => {
     let period = await getOrCreatePeriod(tx, orgId, year, month, true);
     const res = await generateInTx(tx, orgId, userId, period);
-    if (res.statements.length === 0) throw new Error('Nothing to finalize: no statements were generated');
+    if (res.statements.length === 0) throw new UserError('Nothing to finalize: no statements were generated');
     if (period.status === 'DRAFT') period = await setPeriodStatus(tx, orgId, userId, period, 'REVIEW');
     const critical = res.exceptions.filter((e) => e.severity === 'CRITICAL').length;
     period = await setPeriodStatus(tx, orgId, userId, period, 'FINALIZED', { criticalExceptions: critical, managerAcknowledged: opts.acknowledgeCritical });

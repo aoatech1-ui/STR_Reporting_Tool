@@ -1,4 +1,5 @@
 import { formatMoney, formatRate, mulBps, type Cents } from '../money.ts';
+import { UserError } from '../errors.ts';
 
 export type CommissionType = 'PERCENT_GROSS' | 'PERCENT_NET' | 'FIXED' | 'HYBRID';
 
@@ -34,8 +35,8 @@ export interface CommissionCalculation {
 /** Picks the single rule effective for the period end. Zero or overlapping rules are errors, never guessed. */
 export function selectRule(rules: CommissionRule[], periodEnd: string): CommissionRule {
   const hits = rules.filter((r) => r.effectiveFrom <= periodEnd && (r.effectiveTo === null || r.effectiveTo >= periodEnd));
-  if (hits.length === 0) throw new Error(`No commission rule effective on ${periodEnd}`);
-  if (hits.length > 1) throw new Error(`Overlapping commission rules effective on ${periodEnd}`);
+  if (hits.length === 0) throw new UserError(`No commission rule effective on ${periodEnd}`);
+  if (hits.length > 1) throw new UserError(`Overlapping commission rules effective on ${periodEnd}`);
   return hits[0];
 }
 

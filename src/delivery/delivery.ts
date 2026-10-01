@@ -1,13 +1,13 @@
 import { formatMoney } from '../money.ts';
-import { signLink } from './links.ts';
-import type { AuditLog } from '../audit.ts';
+import { UserError } from '../errors.ts';
 
 export type DeliveryStatus = 'QUEUED' | 'SENT' | 'DELIVERED' | 'BOUNCED' | 'FAILED';
+export type Channel = 'EMAIL' | 'WHATSAPP';
+
 export interface DeliveryRecord {
-  statementId: string; channel: 'EMAIL' | 'WHATSAPP'; recipient: string; status: DeliveryStatus;
+  statementId: string; channel: Channel; recipient: string; status: DeliveryStatus;
   providerMessageId: string | null; sentAt: string | null; templateId?: string; error?: string; resend: boolean;
 }
-export interface EmailProvider { send(m: { to: string[]; subject: string; text: string }): Promise<{ messageId: string }> }
 export interface WhatsAppProvider { sendTemplate(m: { to: string; template: string; params: string[] }): Promise<{ messageId: string }> }
 
 export interface DeliveryTarget {
@@ -15,47 +15,40 @@ export interface DeliveryTarget {
   propertyName: string; monthLabel: string; ownerProceedsCents: number;
   owner: { emails: string[]; emailEnabled: boolean; whatsappPhone: string | null; whatsappEnabled: boolean; whatsappOptIn: boolean };
 }
-export interface DeliveryDeps {
-  email: EmailProvider; whatsapp: WhatsAppProvider; audit: AuditLog; linkSecret: string; baseUrl: string;
-  now: () => number; userId: string; existing: readonly DeliveryRecord[];
-  /** WhatsApp bodies are minimal by default; the full statement is behind the signed link. */
-  whatsappIncludeSummary?: boolean;
-}
-const LINK_TTL_MS = 7 * 24 * 3600 * 1000;
+export interface PlannedDelivery { channel: Channel; recipient: string }
 
-/** Sends only FINALIZED statements. A repeat send needs resend=true and is audited as a resend. */
-export async function deliverStatement(t: DeliveryTarget, d: DeliveryDeps, opts: { resend?: boolean } = {}): Promise<DeliveryRecord[]> {
-  if (t.statementStatus !== 'FINALIZED' && t.statementStatus !== 'LOCKED') throw new Error('Statements can only be sent after finalization');
-  const resend = !!opts.resend;
-  const already = (ch: DeliveryRecord['channel']) => d.existing.some((r) => r.statementId === t.statementId && r.channel === ch && r.status !== 'FAILED' && r.status !== 'BOUNCED');
-  const url = `${d.baseUrl}/s/${signLink(t.statementId, d.linkSecret, d.now() + LINK_TTL_MS)}`;
-  const out: DeliveryRecord[] = [];
-  const record = (r: Omit<DeliveryRecord, 'statementId' | 'resend'>) => {
-    const full = { ...r, statementId: t.statementId, resend };
-    out.push(full);
-    d.audit.append({ userId: d.userId, action: resend ? 'STATEMENT_RESENT' : 'STATEMENT_SENT', entityType: 'owner_statement',
-      entityId: t.statementId, oldValue: null, newValue: { channel: r.channel, status: r.status, recipient: r.recipient }, at: new Date(d.now()).toISOString() });
-  };
-
-  if (t.owner.emailEnabled && t.owner.emails.length && (resend || !already('EMAIL'))) {
-    const to = t.owner.emails.join(', ');
-    try {
-      const res = await d.email.send({ to: t.owner.emails, subject: `${t.monthLabel} owner statement – ${t.propertyName}`,
-        text: `Your ${t.monthLabel} owner statement for ${t.propertyName} is ready.\nOwner proceeds: ${formatMoney(t.ownerProceedsCents)}\nView PDF/CSV (link expires in 7 days): ${url}` });
-      record({ channel: 'EMAIL', recipient: to, status: 'SENT', providerMessageId: res.messageId, sentAt: new Date(d.now()).toISOString() });
-    } catch (e) {
-      record({ channel: 'EMAIL', recipient: to, status: 'FAILED', providerMessageId: null, sentAt: null, error: (e as Error).message });
-    }
+/**
+ * Decides which deliveries to create. Only FINALIZED/LOCKED statements; WhatsApp only with opt-in;
+ * a channel that already has a live (non-failed) delivery is skipped unless this is an explicit resend.
+ */
+export function planDeliveries(t: DeliveryTarget, existing: readonly Pick<DeliveryRecord, 'statementId' | 'channel' | 'status'>[], opts: { resend?: boolean; emailAvailable?: boolean; whatsappAvailable?: boolean } = {}): PlannedDelivery[] {
+  if (t.statementStatus !== 'FINALIZED' && t.statementStatus !== 'LOCKED') throw new UserError('Statements can only be sent after finalization');
+  const live = (ch: Channel) => existing.some((r) => r.statementId === t.statementId && r.channel === ch && r.status !== 'FAILED' && r.status !== 'BOUNCED');
+  const out: PlannedDelivery[] = [];
+  if ((opts.emailAvailable ?? true) && t.owner.emailEnabled && t.owner.emails.length && (opts.resend || !live('EMAIL'))) {
+    out.push({ channel: 'EMAIL', recipient: t.owner.emails.join(',') });
   }
-  if (t.owner.whatsappEnabled && t.owner.whatsappOptIn && t.owner.whatsappPhone && (resend || !already('WHATSAPP'))) {
-    const template = 'statement_ready';
-    const params = [t.monthLabel, t.propertyName, ...(d.whatsappIncludeSummary ? [formatMoney(t.ownerProceedsCents)] : []), url];
-    try {
-      const res = await d.whatsapp.sendTemplate({ to: t.owner.whatsappPhone, template, params });
-      record({ channel: 'WHATSAPP', recipient: t.owner.whatsappPhone, status: 'SENT', providerMessageId: res.messageId, sentAt: new Date(d.now()).toISOString(), templateId: template });
-    } catch (e) {
-      record({ channel: 'WHATSAPP', recipient: t.owner.whatsappPhone, status: 'FAILED', providerMessageId: null, sentAt: null, templateId: template, error: (e as Error).message });
-    }
+  if ((opts.whatsappAvailable ?? true) && t.owner.whatsappEnabled && t.owner.whatsappOptIn && t.owner.whatsappPhone && (opts.resend || !live('WHATSAPP'))) {
+    out.push({ channel: 'WHATSAPP', recipient: t.owner.whatsappPhone });
   }
   return out;
 }
+
+const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
+
+export function composeEmail(t: Pick<DeliveryTarget, 'monthLabel' | 'propertyName' | 'ownerProceedsCents'>, url: string) {
+  const subject = `${t.monthLabel} owner statement – ${t.propertyName}`.replace(/[\r\n]+/g, ' ');
+  const proceeds = formatMoney(t.ownerProceedsCents);
+  const text = `Your ${t.monthLabel} owner statement for ${t.propertyName} is ready.\nOwner proceeds: ${proceeds}\nView statement and CSV (secure link, expires in 7 days): ${url}\n\nThis is a management accounting summary, not tax, legal, or investment advice.`;
+  const html = `<p>Your <strong>${esc(t.monthLabel)}</strong> owner statement for <strong>${esc(t.propertyName)}</strong> is ready.</p>`
+    + `<p>Owner proceeds: <strong>${esc(proceeds)}</strong></p><p><a href="${esc(url)}">View statement and CSV</a> (secure link, expires in 7 days)</p>`
+    + `<p style="color:#666;font-size:12px">This is a management accounting summary, not tax, legal, or investment advice.</p>`;
+  return { subject, text, html };
+}
+
+/** WhatsApp carries no dollar amounts unless the manager opts in; the full statement is behind the signed link. */
+export function composeWhatsApp(t: Pick<DeliveryTarget, 'monthLabel' | 'propertyName' | 'ownerProceedsCents'>, url: string, includeSummary = false) {
+  return { template: 'statement_ready', params: [t.monthLabel, t.propertyName, ...(includeSummary ? [formatMoney(t.ownerProceedsCents)] : []), url] };
+}
+
+export const LINK_TTL_MS = 7 * 24 * 3600 * 1000;

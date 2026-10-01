@@ -1,5 +1,6 @@
 import type { Db, Tx } from '../db/pool.ts';
 import { appendAudit } from './audit.ts';
+import { UserError } from '../errors.ts';
 
 export interface OwnerInput {
   legalName: string; displayName: string; email?: string | null; secondaryEmail?: string | null; emailEnabled?: boolean;
@@ -14,9 +15,9 @@ const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PHONE = /^\+[1-9]\d{6,14}$/; // E.164
 
 function validate(o: OwnerInput) {
-  if (!o.legalName?.trim() || !o.displayName?.trim()) throw new Error('Owner legal and display names are required');
-  for (const e of [o.email, o.secondaryEmail]) if (e && !EMAIL.test(e)) throw new Error(`Invalid email: ${e}`);
-  if (o.whatsappPhone && !PHONE.test(o.whatsappPhone)) throw new Error('WhatsApp phone must be E.164 (+15551234567)');
+  if (!o.legalName?.trim() || !o.displayName?.trim()) throw new UserError('Owner legal and display names are required');
+  for (const e of [o.email, o.secondaryEmail]) if (e && !EMAIL.test(e)) throw new UserError(`Invalid email: ${e}`);
+  if (o.whatsappPhone && !PHONE.test(o.whatsappPhone)) throw new UserError('WhatsApp phone must be E.164 (+15551234567)');
 }
 
 const map = (x: any): Owner => ({
@@ -48,7 +49,7 @@ export async function createOwner(tx: Tx, orgId: string, userId: string, o: Owne
 
 export async function updateOwner(tx: Tx, orgId: string, userId: string, id: string, patch: Partial<OwnerInput>): Promise<Owner> {
   const cur = (await tx.query('SELECT * FROM owners WHERE id = $1 AND organization_id = $2 FOR UPDATE', [id, orgId])).rows[0];
-  if (!cur) throw new Error('Owner not found');
+  if (!cur) throw new UserError('Owner not found');
   const before = map(cur);
   const next = { ...before, ...patch };
   validate(next);
