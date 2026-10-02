@@ -12,7 +12,7 @@ import { loadStatements, statementOrg } from '../../repo/statements.ts';
 import type { Ctx } from '../app.ts';
 
 export async function publicRoutes(app: FastifyInstance, c: Ctx) {
-  app.get('/healthz', { config: { rateLimit: false } }, async (_req, reply) => {
+  app.get('/healthz', { logLevel: 'warn', config: { rateLimit: false } }, async (_req, reply) => {
     try { await c.pool.query('SELECT 1'); return { ok: true }; } catch { return reply.code(503).send({ ok: false }); }
   });
 

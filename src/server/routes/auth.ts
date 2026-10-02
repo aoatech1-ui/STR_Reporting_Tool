@@ -5,7 +5,7 @@ import { GRANTS } from '../../auth/permissions.ts';
 import { UserError } from '../../errors.ts';
 import { authenticate, checkCurrentPassword, createSession, deleteSession, listUsers, setPassword, updateUser, SESSION_ABSOLUTE_MS } from '../../repo/auth.ts';
 import { createUser } from '../../repo/orgs.ts';
-import { getJobStats } from '../../repo/ops.ts';
+import { getJobStats, getWorkerStatus } from '../../repo/ops.ts';
 import { auth, SESSION_COOKIE } from '../guard.ts';
 import type { Ctx } from '../app.ts';
 
@@ -69,6 +69,6 @@ export async function authRoutes(app: FastifyInstance, c: Ctx) {
   });
 
   app.get("/api/settings/email", { preHandler: c.guard("users:manage") }, async (req) => ({
-    configured: !!c.email, provider: c.email?.id ?? null, warnings: c.email?.warnings ?? [], jobs: await getJobStats(c.pool, auth(req).orgId), webhooksConfigured: !!(c.config.webhook.token || c.config.webhook.signingSecret), storage: c.files.kind,
+    configured: !!c.email, provider: c.email?.id ?? null, warnings: c.email?.warnings ?? [], jobs: await getJobStats(c.pool, auth(req).orgId), worker: await getWorkerStatus(c.pool), webhooksConfigured: !!(c.config.webhook.token || c.config.webhook.signingSecret), storage: c.files.kind,
   }));
 }

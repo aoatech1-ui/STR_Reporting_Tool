@@ -4,7 +4,7 @@
  * Add --org-id <uuid> to add an admin to an existing organization instead. Password comes from ADMIN_PASSWORD, else stdin.
  */
 import { parseArgs } from 'node:util';
-import { createPool, withTx } from '../db/pool.ts';
+import { createPool, poolOptionsFromEnv, withTx } from '../db/pool.ts';
 import { migrate } from '../db/migrate.ts';
 import { createOrganization, createUser } from '../repo/orgs.ts';
 
@@ -15,7 +15,7 @@ if (!url) { console.error('DATABASE_URL is required'); process.exit(2); }
 let password = process.env.ADMIN_PASSWORD;
 if (!password) { password = ''; for await (const chunk of process.stdin) password += chunk; password = password.replace(/\r?\n$/, ''); }
 
-const pool = createPool(url, 2);
+const pool = createPool(url, 2, poolOptionsFromEnv(process.env));
 try {
   await migrate(pool);
   const id = await withTx(pool, async (tx) => {

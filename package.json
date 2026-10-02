@@ -15,7 +15,9 @@
     "email:test": "node src/cli/email-test.ts",
     "build:web": "vite build web",
     "dev:web": "vite web",
-    "test:e2e": "bash scripts/test-db.sh test/e2e/ui.test.ts"
+    "test:e2e": "bash scripts/test-db.sh test/e2e/ui.test.ts",
+    "preflight": "node src/cli/preflight.ts",
+    "verify-data": "node src/cli/verify-data.ts"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

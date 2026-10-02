@@ -1,0 +1,16 @@
+# Caddy obtains and renews the TLS certificate automatically (Let's Encrypt). DOMAIN must resolve to this server
+# and ports 80 and 443 must be reachable. The app itself is never exposed directly.
+{$DOMAIN} {
+	encode zstd gzip
+	request_body {
+		max_size 12MB
+	}
+	reverse_proxy app:3000 {
+		health_uri /healthz
+		health_interval 15s
+	}
+	log {
+		output stdout
+		format json
+	}
+}

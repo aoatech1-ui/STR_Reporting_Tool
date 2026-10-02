@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createPool, withTx, type Pool } from './pool.ts';
+import { createPool, poolOptionsFromEnv, withTx, type Pool } from './pool.ts';
 
 const DIR = join(fileURLToPath(new URL('.', import.meta.url)), '../../db/migrations');
 
@@ -22,9 +22,18 @@ export async function migrate(pool: Pool, dir = DIR): Promise<string[]> {
   return applied;
 }
 
+/** Migration files not yet applied. Used for fail-fast startup and preflight. */
+export async function pendingMigrations(pool: Pool, dir = DIR): Promise<string[]> {
+  const files = readdirSync(dir).filter((f) => f.endsWith('.sql')).sort();
+  const t = await pool.query(`SELECT to_regclass('schema_migrations') AS t`);
+  if (!t.rows[0].t) return files;
+  const done = new Set((await pool.query('SELECT name FROM schema_migrations')).rows.map((r) => r.name as string));
+  return files.filter((f) => !done.has(f));
+}
+
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const url = process.env.DATABASE_URL;
   if (!url) { console.error('DATABASE_URL is required'); process.exit(1); }
-  const pool = createPool(url);
+  const pool = createPool(url, undefined, { ...poolOptionsFromEnv(process.env), statement_timeout: 0 }); // migrations may legitimately run long
   migrate(pool).then((a) => console.log(a.length ? `Applied: ${a.join(', ')}` : 'Up to date')).finally(() => pool.end());
 }

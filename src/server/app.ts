@@ -16,7 +16,7 @@ import { authRoutes } from './routes/auth.ts';
 import { coreRoutes } from './routes/core.ts';
 import { publicRoutes } from './routes/public.ts';
 
-export interface AppDeps { pool: Pool; config: AppConfig; email: EmailSetup | null; now?: () => Date; logger?: boolean; /** Receipts and generated statement files (default: ./data/files on local disk). */ files?: FileStore; /** Built UI directory (default: web/dist). The API runs without it. */ webDir?: string }
+export interface AppDeps { pool: Pool; config: AppConfig; email: EmailSetup | null; now?: () => Date; logger?: boolean | { level: string }; /** Receipts and generated statement files (default: ./data/files on local disk). */ files?: FileStore; /** Built UI directory (default: web/dist). The API runs without it. */ webDir?: string }
 const DEFAULT_WEB_DIR = fileURLToPath(new URL('../../web/dist', import.meta.url));
 const API_PREFIXES = ['/api/', '/s/', '/webhooks/', '/healthz'];
 const STRICT_CSP = "default-src 'none'; frame-ancestors 'none'";
@@ -32,7 +32,7 @@ const PG_STATUS: Record<string, [number, string]> = {
 
 export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   const now = deps.now ?? (() => new Date());
-  const app = Fastify({ logger: deps.logger ? { redact: ['req.headers.cookie', 'req.headers.authorization', 'req.headers["x-csrf-token"]'] } : false,
+  const app = Fastify({ logger: deps.logger ? { ...(typeof deps.logger === 'object' ? deps.logger : {}), redact: ['req.headers.cookie', 'req.headers.authorization', 'req.headers["x-csrf-token"]'] } : false,
     trustProxy: deps.config.trustProxy, bodyLimit: 12 * 1024 * 1024 });
   const ctx: Ctx = { pool: deps.pool, config: deps.config, email: deps.email, files: deps.files ?? new LocalDiskStore(process.env.FILE_STORE_DIR || './data/files'), now, guard: makeGuard({ pool: deps.pool, config: deps.config, now }) };
 
@@ -64,8 +64,12 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       setHeaders: (res, path) => { res.header('cache-control', path.includes('/assets/') ? 'public, max-age=31536000, immutable' : 'no-store'); } });
   }
   app.setNotFoundHandler((req, reply) => {
-    // Client-side routes (/owners, /view/:token, ...) get the SPA shell; API-ish paths and non-HTML requests get a JSON 404.
-    if (hasUi && req.method === 'GET' && !API_PREFIXES.some((p) => req.url.startsWith(p)) && String(req.headers.accept ?? '').includes('text/html')) {
+    // Client-side routes (/owners, /view/:token, ...) get the SPA shell. Not for API-ish paths, file-like paths (/x.js), or clients that
+    // explicitly refuse HTML. `Accept: */*` (curl, uptime monitors, link checkers) counts as willing: they must see the app, not a 404.
+    const accept = String(req.headers.accept ?? '');
+    const path = req.url.split('?')[0];
+    const wantsHtml = accept === '' || accept.includes('text/html') || accept.includes('*/*');
+    if (hasUi && req.method === 'GET' && wantsHtml && !API_PREFIXES.some((p) => req.url.startsWith(p)) && (path.startsWith('/view/') || !/\.[A-Za-z0-9]{1,8}$/.test(path))) { // owner links contain dots but are app routes
       return reply.header('cache-control', 'no-store').sendFile('index.html');
     }
     return reply.code(404).send({ error: 'Not found' });

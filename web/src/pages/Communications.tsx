@@ -44,7 +44,8 @@ export function Integrations() {
             {d.storage !== 's3' && <Note tone="warn">Files are on this server's disk. Use a persistent volume and back it up, or switch to S3-compatible storage (<code>FILE_STORE=s3</code>).</Note>}
           </Card>
           <Card title="Background jobs"><dl className="dl">{['QUEUED', 'RUNNING', 'DONE', 'FAILED'].map((k) => <><dt key={k + 't'}>{k.charAt(0) + k.slice(1).toLowerCase()}</dt><dd key={k}>{d.jobs[k] ?? 0}</dd></>)}</dl>
-            <p className="muted small" style={{ marginBottom: 0 }}>Queued jobs are sent by the worker process. If queued stays above zero, check that the worker is running.</p></Card></>)}</Loaded>
+            <dl className="dl"><dt>Worker</dt><dd>{d.worker.active > 0 ? <Badge tone="good">Running ({d.worker.active})</Badge> : <Badge tone="bad">Not running</Badge>}{d.worker.lastSeenSecondsAgo !== null && d.worker.active === 0 && <span className="muted small"> last seen {Math.round(d.worker.lastSeenSecondsAgo / 60)} min ago</span>}</dd></dl>
+            {d.worker.active === 0 && <Note tone="bad"><b>No background worker is running.</b> Statements will not be emailed and PDFs will not be archived until the worker process (<code>npm run worker</code>, or the <code>worker</code> container) is started.</Note>}</Card></>)}</Loaded>
         <Card title={<>WhatsApp <Badge>Not configured</Badge></>}><p style={{ margin: 0 }} className="muted">Owner opt-in and message rules are in place; connecting an approved WhatsApp Business provider is a separate setup step. Messages never contain dollar amounts by default.</p></Card>
       </div>
     </Page>

@@ -1,0 +1,120 @@
+# Single-server production stack: Postgres, one-shot migration, API+UI, worker, and Caddy (automatic HTTPS).
+#   cp .env.production.example .env   # fill it in
+#   docker compose up -d
+# See docs/DEPLOY.md.
+name: str-owner-accounting
+
+x-app: &app
+  image: ${APP_IMAGE:-str-owner-accounting:latest}
+  build: .
+  env_file: .env
+  environment: &app-env
+    DATABASE_URL: postgres://str:${POSTGRES_PASSWORD}@db:5432/str
+    BASE_URL: https://${DOMAIN}
+    TRUST_PROXY: "true"
+    FILE_STORE_DIR: /data/files
+  restart: unless-stopped
+  init: true
+  read_only: true
+  tmpfs: [/tmp]
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  logging: &logging
+    driver: json-file
+    options: { max-size: "20m", max-file: "5" }
+
+services:
+  db:
+    image: ${POSTGRES_IMAGE:-postgres:16-bookworm}
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: str
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: str
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U str -d str"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    logging: *logging
+
+  migrate:
+    <<: *app
+    command: ["node", "src/db/migrate.ts"]
+    restart: "no"
+    depends_on:
+      db: { condition: service_healthy }
+
+  app:
+    <<: *app
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    volumes: [files:/data/files]
+    expose: ["3000"]
+    stop_grace_period: 30s
+
+  worker:
+    <<: *app
+    command: ["node", "src/worker/main.ts"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    volumes: [files:/data/files]
+    stop_grace_period: 60s
+    healthcheck:
+      # healthy while a heartbeat from this worker's host is fresh (the app shows the same signal on Integrations)
+      test: ["CMD", "node", "-e", "import('./src/db/pool.ts').then(async ({createPool})=>{const p=createPool(process.env.DATABASE_URL,1);const r=await p.query(\"SELECT count(*)::int n FROM worker_heartbeats WHERE last_seen > now()-interval '60 seconds'\");await p.end();process.exit(r.rows[0].n>0?0:1)}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      start_period: 40s
+      retries: 3
+
+  caddy:
+    image: ${CADDY_IMAGE:-caddy:2}
+    restart: unless-stopped
+    ports: ["80:80", "443:443", "443:443/udp"]
+    environment:
+      DOMAIN: ${DOMAIN}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: [app]
+    logging: *logging
+
+  # One-off tools (not started by `up`): docker compose run --rm tools node src/cli/preflight.ts
+  tools:
+    <<: *app
+    profiles: ["tools"]
+    restart: "no"
+    command: ["node", "src/cli/preflight.ts"]
+    volumes: [files:/data/files]
+
+  # docker compose run --rm backup                      -> writes ./backups
+  # docker compose run --rm --entrypoint bash backup /scripts/restore.sh --db /backups/<file> --yes   (see docs/DEPLOY.md)
+  backup:
+    image: ${POSTGRES_IMAGE:-postgres:16-bookworm}
+    profiles: ["tools"]
+    restart: "no"
+    environment:
+      PGHOST: db
+      PGUSER: str
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      PGDATABASE: str
+      BACKUP_DIR: /backups
+      FILES_DIR: /data/files
+      KEEP_DAYS: ${BACKUP_KEEP_DAYS:-14}
+      BACKUP_PASSPHRASE: ${BACKUP_PASSPHRASE:-}
+    volumes:
+      - ./backups:/backups
+      - files:/data/files:ro
+      - ./scripts:/scripts:ro
+    entrypoint: ["bash", "/scripts/backup.sh"]
+    depends_on:
+      db: { condition: service_healthy }
+
+volumes:
+  pgdata:
+  files:
+  caddy_data:
+  caddy_config:

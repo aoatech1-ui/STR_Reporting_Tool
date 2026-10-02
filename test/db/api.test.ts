@@ -299,7 +299,11 @@ describe('HTTP API', { skip }, () => {
     assert.equal(api.statusCode, 401); assert.equal(api.headers['content-security-policy'], "default-src 'none'; frame-ancestors 'none'");
     assert.equal((await ui.inject({ method: 'GET', url: '/api/nope', headers: html })).statusCode, 404, 'API paths never get the SPA shell');
     assert.equal((await ui.inject({ method: 'GET', url: '/s/nope', headers: html })).statusCode, 404);
-    assert.equal((await ui.inject({ method: 'GET', url: '/missing.js' })).statusCode, 404, 'non-HTML requests get a JSON 404');
+    assert.equal((await ui.inject({ method: 'GET', url: '/missing.js' })).statusCode, 404, 'file-like paths get a JSON 404');
+    assert.equal((await ui.inject({ method: 'GET', url: '/', headers: { accept: '*/*' } })).statusCode, 200, 'curl / uptime monitors (Accept: */*) get the app');
+    assert.equal((await ui.inject({ method: 'GET', url: '/close?ym=2026-09' })).statusCode, 200, 'no Accept header at all');
+    assert.equal((await ui.inject({ method: 'GET', url: '/owners', headers: { accept: 'application/json' } })).statusCode, 404, 'explicit JSON clients are not given HTML');
+    assert.equal((await ui.inject({ method: 'POST', url: '/owners', headers: html })).statusCode, 404, 'only GET');
     await ui.close(); fs.rmSync(dir, { recursive: true });
   });
 
