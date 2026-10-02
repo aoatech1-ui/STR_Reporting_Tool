@@ -41,3 +41,8 @@ export async function getOrCreateCategory(tx: Tx, orgId: string, name: string): 
 export async function listCategories(db: Db, orgId: string): Promise<{ id: string; name: string; active: boolean }[]> {
   return (await db.query('SELECT id, name, active FROM expense_categories WHERE organization_id=$1 ORDER BY name', [orgId])).rows;
 }
+
+export async function getOrganization(db: Db, orgId: string): Promise<{ id: string; legalName: string; displayName: string; email: string | null }> {
+  const r = await db.query('SELECT id, legal_name, display_name, email FROM organizations WHERE id=$1', [orgId]);
+  return { id: r.rows[0].id, legalName: r.rows[0].legal_name, displayName: r.rows[0].display_name, email: r.rows[0].email };
+}

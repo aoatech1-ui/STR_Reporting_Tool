@@ -104,3 +104,26 @@ test('exceptions: negative proceeds and unmatched revenue are critical', () => {
   for (const c of ['NEGATIVE_OWNER_PROCEEDS', 'UNMATCHED_REVENUE', 'MISSING_OWNER_EMAIL', 'MISSING_WHATSAPP_OPT_IN']) assert.ok(codes.includes(c), c);
   assert.equal(ex.filter((e) => e.severity === 'CRITICAL').length, 2);
 });
+
+import { buildAnnualReport } from '../src/accounting/annual.ts';
+test('annual report: monthly table, totals, category totals, tax-safe wording', () => {
+  const sep = buildStatement(input()); const oct = buildStatement(input({ month: 10, expenses: [exp('e9', 'Repairs', 30000), exp('e8', 'Cleaning', 5000)] }));
+  const prior = buildStatement(input({ year: 2025 }));
+  const r = buildAnnualReport(2026, [sep, oct, prior]);
+  assert.equal(r.months.length, 12);
+  assert.equal(r.statementCount, 2, 'other years excluded');
+  assert.equal(r.months[8].ownerProceedsCents, 400000);
+  assert.equal(r.months[9].ownerProceedsCents, 600000 - 35000 - 120000);
+  assert.equal(r.totals.ownerProceedsCents, 400000 + 445000);
+  assert.equal(r.totals.commissionCents, 240000);
+  assert.deepEqual(r.expenseCategories.find((c) => c.category === 'Repairs'), { category: 'Repairs', cents: 80000 });
+  assert.equal(r.totals.ownerProceedsCents, r.months.reduce((a, m) => a + m.ownerProceedsCents, 0));
+  assert.match(r.disclaimer, /not a tax return/);
+  assert.ok(!/guarantee/i.test(r.explanation));
+});
+
+test('expense line text has no dangling colon when there is no description', () => {
+  const s = buildStatement(input({ expenses: [{ ...exp('e1', 'Repairs', 100), description: '' }, exp('e2', 'Supplies', 200)] }));
+  const text = s.lines.filter((l) => l.type === 'EXPENSE').map((l) => l.description);
+  assert.deepEqual(text, ['V', 'V: Supplies']);
+});

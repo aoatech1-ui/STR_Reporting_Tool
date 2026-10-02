@@ -63,7 +63,7 @@ export function buildStatement(inp: StatementInput): Statement {
     ...inp.earnings.map((r): StatementLine => ({ type: 'EARNINGS', sourceId: r.sourceTransactionId, date: r.earningsDate,
       description: `${r.kind}${r.reservationId ? ' ' + r.reservationId : ''}`, category: null, amountCents: r.netPayoutCents })),
     ...inp.expenses.map((e): StatementLine => ({ type: 'EXPENSE', sourceId: e.id, date: e.date,
-      description: `${e.vendor}: ${e.description}${e.ownerPaid ? ' (owner-paid, not deducted)' : ''}`, category: e.category,
+      description: `${[e.vendor, e.description].filter((x) => x && x.trim()).join(': ')}${e.ownerPaid ? ' (owner-paid, not deducted)' : ''}`, category: e.category,
       amountCents: e.ownerPaid ? 0 : -(e.amountCents + e.taxCents) })),
     { type: 'COMMISSION', sourceId: inp.rule.id, date: null, description: `Management fee: ${commission.explanation}`, category: null,
       amountCents: -commission.commissionCents },

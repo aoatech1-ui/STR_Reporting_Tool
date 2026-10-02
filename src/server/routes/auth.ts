@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { withTx } from '../../db/pool.ts';
+import { GRANTS } from '../../auth/permissions.ts';
 import { UserError } from '../../errors.ts';
 import { authenticate, checkCurrentPassword, createSession, deleteSession, listUsers, setPassword, updateUser, SESSION_ABSOLUTE_MS } from '../../repo/auth.ts';
 import { createUser } from '../../repo/orgs.ts';
@@ -19,7 +20,7 @@ export async function authRoutes(app: FastifyInstance, c: Ctx) {
     const user = await authenticate(c.pool, body.email, body.password, now, c.config.scryptCost);
     const s = await withTx(c.pool, (tx) => createSession(tx, user, now, { ip: req.ip, userAgent: req.headers['user-agent'] }));
     reply.setCookie(SESSION_COOKIE, s.token, { ...cookieOpts, maxAge: SESSION_ABSOLUTE_MS / 1000 });
-    return { user: { id: user.id, name: user.name, email: user.email, role: user.role }, csrfToken: s.csrf };
+    return { user: { id: user.id, name: user.name, email: user.email, role: user.role }, permissions: [...GRANTS[user.role]], csrfToken: s.csrf };
   });
 
   app.post('/api/auth/logout', { preHandler: c.guard('read') }, async (req, reply) => {
@@ -30,7 +31,7 @@ export async function authRoutes(app: FastifyInstance, c: Ctx) {
 
   app.get('/api/auth/me', { preHandler: c.guard('read') }, async (req) => {
     const a = auth(req);
-    return { user: { id: a.id, name: a.name, email: a.email, role: a.role }, csrfToken: a.csrf };
+    return { user: { id: a.id, name: a.name, email: a.email, role: a.role }, permissions: [...GRANTS[a.role]], csrfToken: a.csrf };
   });
 
   app.post('/api/auth/change-password', { preHandler: c.guard('read'), config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, async (req) => {

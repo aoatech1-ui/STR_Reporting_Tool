@@ -6,7 +6,7 @@ import { createExpense, deleteExpense, getExpense, listExpenses, reverseExpense,
 import { listCategories } from '../../repo/orgs.ts';
 import { createOwner, getOwner, listOwners, updateOwner } from '../../repo/owners.ts';
 import { getPeriod } from '../../repo/periods.ts';
-import { createProperty, getProperty, listProperties, listRules, setCommissionRule } from '../../repo/properties.ts';
+import { createProperty, getProperty, listProperties, listRules, setCommissionRule, updateProperty } from '../../repo/properties.ts';
 import { auth } from '../guard.ts';
 import type { Ctx } from '../app.ts';
 
@@ -70,6 +70,11 @@ export async function coreRoutes(app: FastifyInstance, c: Ctx) {
     const a = auth(req); const b = PropertyBody.parse(req.body);
     return reply.code(201).send({ id: await withTx(c.pool, (tx) => createProperty(tx, a.orgId, a.id, b as any)) });
   });
+  app.patch('/api/properties/:id', { preHandler: g('properties:write') }, async (req) => {
+    const a = auth(req); const { id } = Id.parse(req.params);
+    const b = PropertyBody.omit({ ownerId: true }).partial().extend({ active: z.boolean().optional() }).strict().parse(req.body);
+    return { property: await withTx(c.pool, (tx) => updateProperty(tx, a.orgId, a.id, id, b as any)) };
+  });
   app.post('/api/properties/:id/commission-rules', { preHandler: g('commission:write') }, async (req, reply) => {
     const a = auth(req); const { id } = Id.parse(req.params); const b = RuleBody.parse(req.body);
     return reply.code(201).send({ id: await withTx(c.pool, (tx) => setCommissionRule(tx, a.orgId, a.id, id, b)) });
@@ -82,10 +87,12 @@ export async function coreRoutes(app: FastifyInstance, c: Ctx) {
     let periodId: string | undefined;
     if (q.ym) {
       const p = await getPeriod(c.pool, a.orgId, +q.ym.slice(0, 4), +q.ym.slice(5));
-      if (!p) return { expenses: [] };
+      if (!p) return { expenses: [], totals: { chargedCents: 0, ownerPaidCents: 0 } };
       periodId = p.id;
     }
-    return { expenses: await listExpenses(c.pool, a.orgId, { periodId, propertyId: q.propertyId, ownerId: q.ownerId }) };
+    const expenses = await listExpenses(c.pool, a.orgId, { periodId, propertyId: q.propertyId, ownerId: q.ownerId });
+    const tot = (paid: boolean) => expenses.filter((e) => e.ownerPaid === paid).reduce((acc, e) => acc + e.amountCents + e.taxCents, 0);
+    return { expenses, totals: { chargedCents: tot(false), ownerPaidCents: tot(true) } };
   });
   app.get('/api/expenses/:id', { preHandler: g('read') }, async (req) => {
     const e = await getExpense(c.pool, auth(req).orgId, Id.parse(req.params).id);

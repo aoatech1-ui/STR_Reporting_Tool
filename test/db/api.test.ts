@@ -198,7 +198,7 @@ describe('HTTP API', { skip }, () => {
     const dl = (await mgr.get(`/api/statements/${sid}`)).json().deliveries;
     assert.deepEqual(dl.map((d: any) => d.status), ['SENT']);
 
-    const token = sent[0].text.match(/\/s\/(\S+)/)[1];
+    const token = sent[0].text.match(/\/view\/(\S+)/)[1];
     const pub = await app.inject(`/s/${token}`);
     assert.equal(pub.statusCode, 200);
     assert.equal(pub.json().statement.ownerProceedsCents, 400000);
@@ -227,6 +227,79 @@ describe('HTTP API', { skip }, () => {
     const dash = (await mgr.get('/api/dashboard?ym=2026-09')).json();
     assert.deepEqual([dash.month.revenueCents, dash.month.commissionsCents, dash.month.ownerDistributionsCents, dash.unmatchedTransactions, dash.failedDeliveries], [600000, 120000, 400000, 1, 0]);
     Object.assign(orgA, { owner, prop, sid });
+  });
+
+  test('UI endpoints: revenue, imports, deliveries, annual, statement detail/CSV, property edit, permissions on login', async () => {
+    const mgr = await as('manager-a@example.com'), viewer = await as('viewer-a@example.com');
+    const { owner, prop, sid } = orgA;
+    const me = (await mgr.get('/api/auth/me')).json();
+    assert.ok(me.permissions.includes('period:finalize') && !me.permissions.includes('users:manage'));
+    assert.deepEqual((await viewer.get('/api/auth/me')).json().permissions, ['read']);
+
+    const rev = (await viewer.get(`/api/revenue?ym=2026-09&propertyId=${prop}`)).json();
+    assert.equal(rev.rows.length, 2);
+    assert.deepEqual([rev.totals.grossBookingCents, rev.totals.platformFeeCents, rev.totals.netPayoutCents], [620000, 20000, 600000]);
+    assert.equal(rev.rows[0].propertyName, '123 Main Street');
+    assert.equal((await viewer.get('/api/revenue?ym=2026-10')).json().rows.length, 0);
+    assert.equal((await viewer.get('/api/revenue?ym=bad')).statusCode, 400);
+
+    const imports = (await viewer.get('/api/imports')).json().batches;
+    assert.ok(imports.length >= 1);
+    assert.deepEqual([imports[imports.length - 1].filename, imports[imports.length - 1].imported], ['sep.csv', 2]);
+    assert.equal(imports.reduce((a: number, b: any) => a + b.unmatched, 0), 1, 'unmatched Mystery Cabin row is still open');
+
+    const dels = (await viewer.get('/api/deliveries')).json().deliveries;
+    assert.equal(dels.length, 1);
+    assert.deepEqual([dels[0].status, dels[0].ownerName, dels[0].recipient, dels[0].month], ['DELIVERED', 'John Smith', 'john@example.com', 9]);
+    assert.equal((await viewer.get('/api/deliveries?status=FAILED')).json().deliveries.length, 0);
+
+    const annual = (await viewer.get(`/api/annual?year=2026&ownerId=${owner}`)).json();
+    assert.equal(annual.report.totals.ownerProceedsCents, 400000);
+    assert.equal(annual.report.months[8].commissionCents, 120000);
+    assert.deepEqual(annual.report.expenseCategories.map((c: any) => c.category).sort(), ['Maintenance', 'Repairs', 'Supplies']);
+    assert.match(annual.report.disclaimer, /not a tax return/);
+    assert.equal(annual.organization.displayName, 'Manager LLC');
+    assert.equal((await viewer.get(`/api/annual?year=2026&ownerId=00000000-0000-4000-8000-000000000000`)).statusCode, 404);
+
+    const d = (await viewer.get(`/api/statements/${sid}`)).json();
+    assert.equal(d.ytd.ownerProceedsCents, 400000);
+    assert.deepEqual([d.property.name, d.owner.displayName, d.organization.displayName], ['123 Main Street', 'John Smith', 'Manager LLC']);
+    assert.match(d.disclaimer, /not tax, legal, or investment advice/);
+    const csv = await viewer.get(`/api/statements/${sid}/csv`);
+    assert.match(csv.body, /4000\.00/); assert.match(String(csv.headers['content-disposition']), /STM-202609-/);
+
+    assert.equal((await viewer.call('PATCH', `/api/properties/${prop}`, { notes: 'x' })).statusCode, 403);
+    assert.equal((await mgr.call('PATCH', `/api/properties/${prop}`, { notes: 'Gate code 1234', active: true, extra: 1 })).statusCode, 400, 'strict');
+    assert.equal((await mgr.call('PATCH', `/api/properties/${prop}`, { notes: 'Gate code 1234' })).statusCode, 200);
+    assert.equal((await mgr.get(`/api/properties/${prop}`)).json().property.notes, 'Gate code 1234');
+
+    const exp = (await viewer.get('/api/expenses?ym=2026-09')).json();
+    assert.deepEqual(exp.totals, { chargedCents: 80000, ownerPaidCents: 0 });
+    const per = (await viewer.get('/api/periods/2026-09')).json();
+    assert.deepEqual([per.totals.netPayoutCents, per.totals.expensesCents, per.totals.commissionCents, per.totals.ownerProceedsCents], [600000, 80000, 120000, 400000]);
+    const audit = (await (await as('admin-a@example.com')).get('/api/audit?entityType=expense&limit=5')).json().entries;
+    assert.ok(audit.every((e: any) => typeof e.userName === 'string'));
+  });
+
+  test('UI serving: SPA shell for browser routes, strict CSP for API, UI CSP for pages, owner link route', async () => {
+    const dir = (await import('node:fs')).mkdtempSync('/tmp/webdir-');
+    const fs = await import('node:fs');
+    fs.mkdirSync(`${dir}/assets`); fs.writeFileSync(`${dir}/index.html`, '<!doctype html><title>SPA</title>'); fs.writeFileSync(`${dir}/assets/app-abc.js`, 'console.log(1)');
+    const ui = await buildApp({ pool, config: config(), email: null, now, webDir: dir });
+    const html = { accept: 'text/html' };
+    const page = await ui.inject({ method: 'GET', url: '/owners', headers: html });
+    assert.equal(page.statusCode, 200); assert.match(page.body, /SPA/);
+    assert.match(String(page.headers['content-security-policy']), /script-src 'self'/);
+    assert.equal(page.headers['cache-control'], 'no-store');
+    assert.equal((await ui.inject({ method: 'GET', url: '/view/some.token.here', headers: html })).statusCode, 200, 'owner link route serves the SPA');
+    const asset = await ui.inject('/assets/app-abc.js');
+    assert.equal(asset.statusCode, 200); assert.match(String(asset.headers['cache-control']), /immutable/);
+    const api = await ui.inject('/api/owners');
+    assert.equal(api.statusCode, 401); assert.equal(api.headers['content-security-policy'], "default-src 'none'; frame-ancestors 'none'");
+    assert.equal((await ui.inject({ method: 'GET', url: '/api/nope', headers: html })).statusCode, 404, 'API paths never get the SPA shell');
+    assert.equal((await ui.inject({ method: 'GET', url: '/s/nope', headers: html })).statusCode, 404);
+    assert.equal((await ui.inject({ method: 'GET', url: '/missing.js' })).statusCode, 404, 'non-HTML requests get a JSON 404');
+    await ui.close(); fs.rmSync(dir, { recursive: true });
   });
 
   test('tenant isolation: org B sees none of org A over HTTP', async () => {

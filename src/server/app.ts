@@ -1,5 +1,8 @@
 import cookie from '@fastify/cookie';
 import rateLimit from '@fastify/rate-limit';
+import fastifyStatic from '@fastify/static';
+import { existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { ZodError } from 'zod';
 import type { Pool } from '../db/pool.ts';
@@ -12,7 +15,12 @@ import { authRoutes } from './routes/auth.ts';
 import { coreRoutes } from './routes/core.ts';
 import { publicRoutes } from './routes/public.ts';
 
-export interface AppDeps { pool: Pool; config: AppConfig; email: EmailSetup | null; now?: () => Date; logger?: boolean }
+export interface AppDeps { pool: Pool; config: AppConfig; email: EmailSetup | null; now?: () => Date; logger?: boolean; /** Built UI directory (default: web/dist). The API runs without it. */ webDir?: string }
+const DEFAULT_WEB_DIR = fileURLToPath(new URL('../../web/dist', import.meta.url));
+const API_PREFIXES = ['/api/', '/s/', '/webhooks/', '/healthz'];
+const STRICT_CSP = "default-src 'none'; frame-ancestors 'none'";
+// The UI is a same-origin SPA: scripts only from self (no inline/eval). Inline styles are allowed for React style props.
+const UI_CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
 export type Ctx = { pool: Pool; config: AppConfig; email: EmailSetup | null; now: () => Date; guard: ReturnType<typeof makeGuard> };
 
 const PG_STATUS: Record<string, [number, string]> = {
@@ -32,7 +40,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
 
   app.addHook('onSend', async (req, reply) => {
     reply.header('x-content-type-options', 'nosniff').header('referrer-policy', 'no-referrer').header('x-frame-options', 'DENY')
-      .header('content-security-policy', "default-src 'none'; frame-ancestors 'none'");
+      .header('content-security-policy', API_PREFIXES.some((p) => req.url.startsWith(p)) ? STRICT_CSP : UI_CSP);
     if (deps.config.cookieSecure) reply.header('strict-transport-security', 'max-age=31536000; includeSubDomains');
     if (!reply.hasHeader('cache-control')) reply.header('cache-control', 'no-store'); // financial data is never cached
   });
@@ -46,7 +54,19 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     req.log.error({ err: { message: err?.message, code: err?.code } }, 'unhandled error');
     return reply.code(500).send({ error: 'Internal server error' });
   });
-  app.setNotFoundHandler((_req, reply) => reply.code(404).send({ error: 'Not found' }));
+  const webDir = deps.webDir ?? DEFAULT_WEB_DIR;
+  const hasUi = existsSync(`${webDir}/index.html`);
+  if (hasUi) {
+    await app.register(fastifyStatic, { root: webDir, wildcard: false, index: false, cacheControl: false,
+      setHeaders: (res, path) => { res.header('cache-control', path.includes('/assets/') ? 'public, max-age=31536000, immutable' : 'no-store'); } });
+  }
+  app.setNotFoundHandler((req, reply) => {
+    // Client-side routes (/owners, /view/:token, ...) get the SPA shell; API-ish paths and non-HTML requests get a JSON 404.
+    if (hasUi && req.method === 'GET' && !API_PREFIXES.some((p) => req.url.startsWith(p)) && String(req.headers.accept ?? '').includes('text/html')) {
+      return reply.header('cache-control', 'no-store').sendFile('index.html');
+    }
+    return reply.code(404).send({ error: 'Not found' });
+  });
 
   await app.register(async (a) => { await authRoutes(a, ctx); await coreRoutes(a, ctx); await accountingRoutes(a, ctx); });
   await app.register(async (a) => publicRoutes(a, ctx));

@@ -53,7 +53,7 @@ describe('outbox + worker', { skip }, () => {
     assert.deepEqual(sent[0].to, ['john@example.com']);
     assert.equal(sent[0].idempotencyKey.startsWith('delivery:'), true);
     assert.match(sent[0].text, /\$4,800\.00/); // $6,000 net payout − 20% commission, no expenses
-    const url = sent[0].text.match(/https:\/\/app\.test\/s\/(\S+)/)![1];
+    const url = sent[0].text.match(/https:\/\/app\.test\/view\/(\S+)/)![1];
     assert.deepEqual(verifyLink(url, 'link-secret', clock.t), { ok: true, statementId: o.statementId });
     const [d] = await listDeliveries(pool, o.statementId);
     assert.deepEqual([d.status, d.providerMessageId], ['SENT', 'em-1']);

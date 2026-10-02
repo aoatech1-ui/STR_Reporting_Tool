@@ -27,7 +27,7 @@ export function deliveryHandler(d: DeliveryDeps): Handler {
     if (!st || (st.status !== 'FINALIZED' && st.status !== 'LOCKED')) throw new EmailError('Statement is not finalized', false);
     const owner = (await getOwner(d.pool, del.organization_id, st.ownerId))!;
     const target = ownerTarget(st, st.id, owner);
-    const url = `${d.baseUrl}/s/${signLink(st.id, d.linkSecret, now() + LINK_TTL_MS)}`;
+    const url = `${d.baseUrl}/view/${signLink(st.id, d.linkSecret, now() + LINK_TTL_MS)}`;
 
     let providerId: string;
     if (del.channel === 'EMAIL') {

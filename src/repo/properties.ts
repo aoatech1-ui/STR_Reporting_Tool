@@ -78,3 +78,18 @@ export async function setCommissionRule(tx: Tx, orgId: string, userId: string, p
     oldValue: open ? mapRule(open) : null, newValue: { ...rule, id: r.rows[0].id } });
   return r.rows[0].id;
 }
+
+export type PropertyPatch = Partial<Omit<PropertyInput, 'ownerId'>> & { active?: boolean };
+
+export async function updateProperty(tx: Tx, orgId: string, userId: string, id: string, patch: PropertyPatch): Promise<Property> {
+  const cur = (await tx.query(`${SELECT} WHERE p.id=$1 AND p.organization_id=$2 FOR UPDATE OF p`, [id, orgId])).rows[0];
+  if (!cur) throw new UserError('Property not found');
+  const before = map(cur), next = { ...before, ...patch };
+  if (!next.name?.trim()) throw new UserError('Property name is required');
+  await tx.query(
+    `UPDATE properties SET name=$3, address=$4, city=$5, state=$6, zip=$7, airbnb_listing_id=$8, airbnb_listing_name=$9, management_start_date=$10, management_end_date=$11, notes=$12, active=$13, updated_at=now()
+     WHERE id=$1 AND organization_id=$2`,
+    [id, orgId, next.name, next.address, next.city, next.state, next.zip, next.airbnbListingId, next.airbnbListingName, next.managementStartDate, next.managementEndDate, next.notes, next.active]);
+  await appendAudit(tx, orgId, { userId, action: 'PROPERTY_UPDATED', entityType: 'property', entityId: id, oldValue: before, newValue: next });
+  return next;
+}

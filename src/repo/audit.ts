@@ -19,14 +19,14 @@ export async function appendAudit(tx: Tx, orgId: string, e: Omit<AuditEntry, 'at
       entry.meta?.ip ?? null, entry.meta?.userAgent ?? null, prevHash, hash, entry.at]);
 }
 
-export interface AuditRow { id: number; userId: string | null; action: string; entityType: string; entityId: string; oldValue: unknown; newValue: unknown; at: string }
+export interface AuditRow { id: number; userId: string | null; userName: string | null; action: string; entityType: string; entityId: string; oldValue: unknown; newValue: unknown; at: string }
 
 export async function listAudit(db: Db, orgId: string, f: { entityType?: string; entityId?: string; limit?: number } = {}): Promise<AuditRow[]> {
   const r = await db.query(
-    `SELECT id, user_id, action, entity_type, entity_id, old_value, new_value, at FROM audit_logs
-     WHERE organization_id = $1 AND ($2::text IS NULL OR entity_type = $2) AND ($3::text IS NULL OR entity_id = $3)
-     ORDER BY id DESC LIMIT $4`, [orgId, f.entityType ?? null, f.entityId ?? null, f.limit ?? 200]);
-  return r.rows.map((x) => ({ id: x.id, userId: x.user_id, action: x.action, entityType: x.entity_type, entityId: x.entity_id,
+    `SELECT a.id, a.user_id, u.name AS user_name, a.action, a.entity_type, a.entity_id, a.old_value, a.new_value, a.at FROM audit_logs a LEFT JOIN users u ON u.id = a.user_id
+     WHERE a.organization_id = $1 AND ($2::text IS NULL OR a.entity_type = $2) AND ($3::text IS NULL OR a.entity_id = $3)
+     ORDER BY a.id DESC LIMIT $4`, [orgId, f.entityType ?? null, f.entityId ?? null, f.limit ?? 200]);
+  return r.rows.map((x) => ({ id: x.id, userId: x.user_id, userName: x.user_name, action: x.action, entityType: x.entity_type, entityId: x.entity_id,
     oldValue: x.old_value, newValue: x.new_value, at: iso(x.at) }));
 }
 

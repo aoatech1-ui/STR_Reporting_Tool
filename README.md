@@ -88,6 +88,47 @@ npm run worker       # sends queued deliveries (run one or more; safe to run sev
 Delivery is **at-least-once**: the handler skips deliveries already sent and forwards a per-delivery idempotency key. The remaining window
 (provider accepted the message but the process died before recording `SENT`) can only duplicate on providers that ignore that key.
 
+## Web UI (added)
+
+React + TypeScript single-page app in `web/`, built with Vite and **served by the API server itself** (same origin, so the session cookie and CSRF
+token need no cross-site configuration). No UI component library; the design system is `web/src/styles.css` (light/dark, print styles).
+
+```
+npm run build:web        # builds web/dist (the server serves it automatically when present)
+npm start                # API + UI on PORT (default 3000)
+npm run dev:web          # Vite dev server with hot reload; proxies /api to a locally running server on :3000
+```
+
+| Screen | Route | Notes |
+|---|---|---|
+| Login | `/login` | Returns you to the page you originally asked for |
+| Dashboard | `/` | Month and YTD figures, "needs attention" counters that link to the fix |
+| Owners / Owner detail | `/owners`, `/owners/:id` | Contacts, email/WhatsApp opt-in, properties, YTD proceeds, statement history |
+| Properties / Property detail | `/properties`, `/properties/:id` | Tabs: overview, revenue, expenses, commission, statements |
+| Commission settings | `/commission` | Dated rules; changes apply forward only |
+| Revenue | `/revenue` | Booking revenue and net payout shown separately |
+| Airbnb import | `/import` | Upload → review → confirm → results; unmatched listings explained; import history |
+| Expenses / Detail | `/expenses`, `/expenses/:id` | Dollars in, integer cents out; edit/delete while open, reversal once closed; history |
+| Monthly close | `/close?ym=2026-09` | Checklist, exceptions, per-property totals, finalize (acknowledge critical issues), send |
+| Statement preview / history | `/statements/:id`, `/statements` | Full statement, Print/Save as PDF, CSV, send/resend, delivery status |
+| Annual reports | `/annual` | Monthly table, category totals, explanation, CSV, print |
+| Communications | `/communications` | Every email/WhatsApp message with status; resend failures |
+| Integrations | `/integrations` | Revenue sources, email provider and warnings, queue health |
+| Settings / Audit log | `/settings`, `/audit` | Password, users and roles; searchable audit trail with integrity check |
+| Owner statement page | `/view/:token` | Public signed link from the email. No login, no manager navigation |
+
+Principles: **the browser never calculates money.** Every figure (statement lines, commission, totals, YTD, annual) is computed by the server and
+only formatted client-side; typed dollar amounts are converted to integer cents at the form boundary and validated again by the server.
+Buttons a role cannot use are hidden (permissions come from `/api/auth/me`), but the server enforces them regardless.
+
+"Download PDF" is **Print / Save as PDF** using the browser's print dialog with a dedicated print stylesheet; server-side PDF generation is not built.
+Receipt attachments are not built yet (the expense form has no upload).
+
+### Tests
+`npm run test:e2e` drives a real Chromium through the whole manager journey (login, owner, property, import, expenses, close, preview, send,
+owner link, annual report, viewer permissions, phone layout) against a real Postgres, saves screenshots, renders the statement to PDF,
+and fails on any JavaScript error or CSP violation. It uses the Chromium at `/opt/pw-browsers/chromium` (override with `CHROME_PATH`).
+
 ## Design decisions
 
 - **Not dependent on Airbnb API.** Airbnb's API is gated by program/scope approval and its terms restrict retaining and analysing
@@ -130,5 +171,5 @@ Unit tests cover import, duplicate detection, expenses, commission, statements, 
 acceptance scenario ($6,000 − $500 − $100 − $200 − 20% = **$4,000**).
 
 ## Not built yet (next)
-Web UI, PDF rendering, S3 receipt storage, a WhatsApp provider adapter (the delivery path and opt-in rules exist), annual report generator,
+Server-side PDF rendering, S3 receipt storage, a WhatsApp provider adapter (the delivery path and opt-in rules exist), annual report generator,
 recurring/scheduled jobs, MFA, owner portal (Phase 2).

@@ -6,6 +6,8 @@ import { verifyLink } from '../../delivery/links.ts';
 import { parseEmailWebhook, WebhookAuthError } from '../../email/webhooks.ts';
 import { appendAudit } from '../../repo/audit.ts';
 import { applyDeliveryWebhook } from '../../repo/deliveries.ts';
+import { computeYtd } from '../../accounting/statement.ts';
+import { getOrganization } from '../../repo/orgs.ts';
 import { loadStatements, statementOrg } from '../../repo/statements.ts';
 import type { Ctx } from '../app.ts';
 
@@ -31,7 +33,9 @@ export async function publicRoutes(app: FastifyInstance, c: Ctx) {
     await withTx(c.pool, (tx) => appendAudit(tx, r.orgId, { userId: null, action: 'STATEMENT_VIEWED', entityType: 'owner_statement', entityId: r.s.id, oldValue: null, newValue: null, meta: { ip: req.ip } }));
     reply.header('x-robots-tag', 'noindex');
     const { s } = r;
-    return { statementNumber: s.statementNumber, owner: s.ownerName, property: s.propertyName, year: s.statement.year, month: s.statement.month,
+    const prior = (await loadStatements(c.pool, r.orgId, { year: s.statement.year, throughMonth: s.statement.month, propertyId: s.propertyId, statuses: ['FINALIZED', 'LOCKED'] }))
+      .filter((x) => x.id !== s.id).map((x) => x.statement);
+    return { ytd: computeYtd([...prior, s.statement], s.statement.year, s.statement.month), organization: (await getOrganization(c.pool, r.orgId)).displayName, statementNumber: s.statementNumber, owner: s.ownerName, property: s.propertyName, year: s.statement.year, month: s.statement.month,
       statement: s.statement, disclaimer: STATEMENT_DISCLAIMER };
   });
   app.get('/s/:token/csv', { config: limit }, async (req, reply) => {

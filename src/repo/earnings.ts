@@ -59,10 +59,36 @@ export class PgImportStore implements ImportStore {
           r.refundCents, r.coHostPayoutCents, r.netPayoutCents, r.currency]);
     }
     for (const j of rejected) {
+      // Re-uploading the same file must not list the same open exception twice.
       await this.tx.query(
         `INSERT INTO import_rejected_rows(organization_id, import_batch_id, source_row, status, idempotency_key, earnings_date, listing_name, net_payout_cents, record)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+         SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9
+         WHERE NOT EXISTS (SELECT 1 FROM import_rejected_rows x WHERE x.organization_id=$1 AND x.idempotency_key=$5 AND x.status=$4)`,
         [this.orgId, batch.id, j.record.sourceRow, j.status, j.idempotencyKey, j.record.earningsDate, j.record.listingName, j.record.netPayoutCents, JSON.stringify(j.record)]);
     }
   }
+}
+
+export interface RevenueRow { id: string; propertyId: string; propertyName: string; kind: string; reservationId: string | null; checkIn: string | null; checkOut: string | null; earningsDate: string; payoutDate: string | null;
+  grossBookingCents: number; cleaningFeeCents: number; platformFeeCents: number; taxCents: number; adjustmentCents: number; refundCents: number; netPayoutCents: number; importBatchId: string }
+
+export async function listRevenue(db: Db, orgId: string, f: { start: string; end: string; propertyId?: string }): Promise<RevenueRow[]> {
+  const r = await db.query(
+    `SELECT e.*, p.name AS property_name FROM earnings_transactions e JOIN properties p ON p.id = e.property_id
+     WHERE e.organization_id=$1 AND e.earnings_date BETWEEN $2 AND $3 AND ($4::uuid IS NULL OR e.property_id=$4) ORDER BY e.earnings_date, p.name, e.source_transaction_id`,
+    [orgId, f.start, f.end, f.propertyId ?? null]);
+  return r.rows.map((x) => ({ id: x.id, propertyId: x.property_id, propertyName: x.property_name, kind: x.kind, reservationId: x.reservation_id, checkIn: x.check_in, checkOut: x.check_out,
+    earningsDate: x.earnings_date, payoutDate: x.payout_date, grossBookingCents: x.gross_booking_cents, cleaningFeeCents: x.cleaning_fee_cents, platformFeeCents: x.platform_fee_cents,
+    taxCents: x.tax_cents, adjustmentCents: x.adjustment_cents, refundCents: x.refund_cents, netPayoutCents: x.net_payout_cents, importBatchId: x.import_batch_id }));
+}
+
+export async function listImportBatches(db: Db, orgId: string, limit = 50) {
+  const r = await db.query(
+    `SELECT b.id, b.filename, b.imported_at, b.record_count, b.successful_count, b.failed_count, b.status, u.name AS imported_by,
+       (SELECT count(*)::int FROM import_rejected_rows j WHERE j.import_batch_id=b.id AND j.status='UNMATCHED_PROPERTY'
+          AND NOT EXISTS (SELECT 1 FROM earnings_transactions e WHERE e.organization_id=j.organization_id AND e.idempotency_key=j.idempotency_key)) AS unmatched,
+       (SELECT count(*)::int FROM import_rejected_rows j WHERE j.import_batch_id=b.id AND j.status='PERIOD_LOCKED') AS locked
+     FROM import_batches b JOIN users u ON u.id=b.imported_by WHERE b.organization_id=$1 ORDER BY b.imported_at DESC LIMIT $2`, [orgId, limit]);
+  return r.rows.map((x) => ({ id: x.id, filename: x.filename, importedAt: new Date(x.imported_at).toISOString(), importedBy: x.imported_by, records: x.record_count,
+    imported: x.successful_count, skipped: x.failed_count, status: x.status, unmatched: x.unmatched, locked: x.locked }));
 }
