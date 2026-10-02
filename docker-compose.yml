@@ -91,7 +91,7 @@ services:
     volumes: [files:/data/files]
 
   # docker compose run --rm backup                      -> writes ./backups
-  # docker compose run --rm --entrypoint bash backup /scripts/restore.sh --db /backups/<file> --yes   (see docs/DEPLOY.md)
+  # docker compose run --rm restore --db /backups/<file> [--files /backups/<file>] --yes   (DESTRUCTIVE, see docs/DEPLOY.md)
   backup:
     image: ${POSTGRES_IMAGE:-postgres:16-bookworm}
     profiles: ["tools"]
@@ -110,6 +110,26 @@ services:
       - files:/data/files:ro
       - ./scripts:/scripts:ro
     entrypoint: ["bash", "/scripts/backup.sh"]
+    depends_on:
+      db: { condition: service_healthy }
+
+  restore:
+    image: ${POSTGRES_IMAGE:-postgres:16-bookworm}
+    profiles: ["tools"]
+    restart: "no"
+    environment:
+      PGHOST: db
+      PGUSER: str
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      PGDATABASE: ${RESTORE_DATABASE:-str}
+      FILES_DIR: /data/files
+      FILES_OWNER: "1000:1000"
+      BACKUP_PASSPHRASE: ${BACKUP_PASSPHRASE:-}
+    volumes:
+      - ./backups:/backups:ro
+      - files:/data/files
+      - ./scripts:/scripts:ro
+    entrypoint: ["bash", "/scripts/restore.sh"]
     depends_on:
       db: { condition: service_healthy }
 

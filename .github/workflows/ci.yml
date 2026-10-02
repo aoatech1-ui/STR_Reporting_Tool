@@ -1,0 +1,92 @@
+name: CI
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends poppler-utils
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build:web
+      - name: Unit tests
+        run: npm test
+      - name: Database and API tests (real Postgres)
+        run: npm run test:db
+      - name: Dependency audit (production)
+        run: npm audit --omit=dev --audit-level=high
+
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+      CHROME_PATH: /tmp/chromium-path
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends poppler-utils
+      - run: npm ci
+      - name: Install Chromium for Playwright
+        run: |
+          npx playwright install --with-deps chromium
+          node -e "console.log(require('playwright').chromium.executablePath())" > /tmp/chromium-path
+      - run: npm run build:web
+      - name: Browser end-to-end tests
+        run: |
+          export CHROME_PATH="$(cat /tmp/chromium-path)"
+          node --test test/e2e/ui.test.ts
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ui-screenshots
+          path: /tmp/ui-shots
+          if-no-files-found: ignore
+
+  docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the production image
+        run: docker build -t str-owner-accounting:ci .
+      - name: Image has no dev tooling and runs unprivileged
+        run: |
+          docker run --rm str-owner-accounting:ci sh -c 'test "$(id -u)" != 0 && ! ls node_modules | grep -qE "^(vite|typescript|playwright)$"'
+      - name: Compose file is valid
+        run: |
+          cp .env.production.example .env
+          POSTGRES_PASSWORD=x DOMAIN=example.com docker compose config -q

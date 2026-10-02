@@ -157,6 +157,25 @@ S3-compatible server; it has not been run against a live cloud bucket, so test o
 receipt upload and removal, PDF downloads whose text is checked, owner link, annual report, viewer permissions, phone layout) against a real Postgres, saves screenshots, renders the statement to PDF,
 and fails on any JavaScript error or CSP violation. It uses the Chromium at `/opt/pw-browsers/chromium` (override with `CHROME_PATH`).
 
+## Production deployment (added)
+
+**Start here: [docs/DEPLOY.md](docs/DEPLOY.md)**, a runbook for a single-server Docker Compose deployment with automatic HTTPS, backups, restore, updates,
+monitoring and a security checklist. In the repository:
+
+| File | Purpose |
+|---|---|
+| `Dockerfile` | One image for API+UI, worker and CLIs. Production dependencies only, non-root, health check. |
+| `docker-compose.yml` + `deploy/Caddyfile` | Postgres, one-shot migration, app, worker, Caddy (TLS). Read-only containers, all capabilities dropped, only 80/443 published. |
+| `.env.production.example` | Everything you must set, with how to generate each secret. |
+| `npm run preflight` | Checks config, secrets, database, migrations, extensions, administrator, audit chain, file storage, email login, worker liveness, clock skew. Exit code 1 on any failure. |
+| `npm run verify-data` | Re-derives finalized statements from source records, checks the audit hash chain and archived-file hashes. Run after restores and weekly. |
+| `scripts/backup.sh`, `scripts/restore.sh` | Checksummed, optionally AES-256-encrypted backups; all-or-nothing restore. |
+| `.github/workflows/ci.yml` | Typecheck, unit + database tests on real Postgres, browser tests, dependency audit, Docker build. |
+
+Safety behaviors: the server refuses to start if database migrations are pending; the Integrations screen and preflight say plainly when no worker is running
+(the classic "emails queued but nothing sending" failure); `/healthz` returns 503 if the database is unreachable. A full disaster recovery (destroy everything, restore
+from an encrypted backup) was rehearsed with these exact files; see the "What was verified" section of the runbook for what was and was not tested.
+
 ## Design decisions
 
 - **Not dependent on Airbnb API.** Airbnb's API is gated by program/scope approval and its terms restrict retaining and analysing

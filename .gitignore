@@ -1,5 +1,6 @@
-node_modules
-.env
 *.log
-web/dist
+.env
+backups/
 data/
+node_modules
+web/dist

@@ -4,7 +4,7 @@
 #   scripts/restore.sh --db backups/db-20261002T020000Z.dump [--files backups/files-20261002T020000Z.tgz] --yes
 #
 # Target comes from PGHOST/PGUSER/PGPASSWORD/PGDATABASE; files go to FILES_DIR. Stop the app and worker first.
-# Encrypted (.gpg) backups need BACKUP_PASSPHRASE. The matching manifest-<ts>.sha256 next to the files is verified when present.
+# FILES_OWNER (e.g. 1000:1000) sets ownership of restored files. Encrypted (.gpg) backups need BACKUP_PASSPHRASE. The matching manifest-<ts>.sha256 next to the files is verified when present.
 # The database restore is a single transaction: it either fully succeeds or leaves the database as it was.
 set -euo pipefail
 umask 077
@@ -32,6 +32,8 @@ if [ -n "$files" ]; then
   : "${FILES_DIR:?FILES_DIR is required to restore files}"
   verify "$files"; plain "$files" "$work/files.tgz"
   mkdir -p "$FILES_DIR"; tar -C "$FILES_DIR" -xzf "$work/files.tgz"
+  # The app runs as an unprivileged user (uid 1000 in the image). Without this, restored files could be readable but not writable.
+  if [ -n "${FILES_OWNER:-}" ]; then chown -R "$FILES_OWNER" "$FILES_DIR"; fi
   echo "[restore] files extracted to $FILES_DIR"
 fi
 echo "[restore] done. Next: node src/cli/preflight.ts && node src/cli/verify-data.ts"
