@@ -138,3 +138,21 @@ test('sender parsing and header-injection safety', () => {
   assert.deepEqual(parseSender('a@b.co'), { email: 'a@b.co' });
   assert.throws(() => parseSender('not an address'));
 });
+
+test('gmail: preset warnings for From mismatch and spaced app passwords; matching config is clean of mismatch warnings', () => {
+  const env = { EMAIL_PROVIDER: 'gmail', EMAIL_FROM: 'PM LLC <statements@pm.example>', SMTP_USER: 'statements@pm.example', SMTP_PASS: 'abcdefghijklmnop' };
+  const ok = createEmailProvider(env)!;
+  assert.equal(ok.provider.name, 'smtp');
+  assert.ok(!ok.warnings.some((w) => /rewrites or rejects/.test(w)) && !ok.warnings.some((w) => /spaces/.test(w)));
+  assert.ok(ok.warnings.some((w) => /500 recipients/.test(w)), 'documents the daily cap');
+  assert.ok(createEmailProvider({ ...env, SMTP_USER: 'other@gmail.com' })!.warnings.some((w) => /rewrites or rejects/.test(w)));
+  assert.ok(createEmailProvider({ ...env, SMTP_USER: 'STATEMENTS@pm.example' })!.warnings.every((w) => !/rewrites or rejects/.test(w)), 'case-insensitive');
+  assert.ok(createEmailProvider({ ...env, SMTP_PASS: 'abcd efgh ijkl mnop' })!.warnings.some((w) => /spaces/.test(w)));
+});
+
+test('smtp verify(): ok passes; bad credentials give an actionable, non-retryable error', async () => {
+  const good = { verify: async () => true, sendMail: async () => ({}) } as any;
+  await smtp({ from, host: 'h', port: 465, secure: true, user: 'u', pass: 'p', transport: good }).verify!();
+  const bad = { verify: async () => { throw Object.assign(new Error('Invalid login'), { code: 'EAUTH', responseCode: 535 }); } } as any;
+  await assert.rejects(() => smtp({ from, host: 'h', port: 465, secure: true, user: 'u', pass: 'p', transport: bad }).verify!(), (e: EmailError) => !e.retryable && /App Password/.test(e.message) && !e.message.includes('Invalid login'));
+});

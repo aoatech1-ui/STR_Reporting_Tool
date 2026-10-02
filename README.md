@@ -68,6 +68,8 @@ Set `EMAIL_PROVIDER` + credentials (see `.env.example`). Secrets live in the env
 | Gmail / Outlook / Office 365 / Yahoo / AOL / Zoho / iCloud / Fastmail | `gmail`, `outlook`, ... | none (no status callbacks) | SMTP + **app password**. Fine for a handful of owners; see caveats |
 | Amazon SES / any SMTP | `ses` / `custom` | none | set `SMTP_HOST` |
 
+**Starting with Gmail?** Follow [docs/gmail-setup.md](docs/gmail-setup.md), then check it with `npm run email:test -- you@example.com`.
+
 **Recommendation:** use a transactional provider (the Brevo, Resend, Mailjet or MailerSend free tiers are plenty for monthly statements) with a verified
 sending domain (SPF + DKIM). Mailbox SMTP (Gmail, Outlook.com, Yahoo, AOL) works but has low daily caps, "From must be the mailbox" constraints,
 Microsoft is retiring password SMTP for Outlook/365, and there are no delivery/bounce callbacks, so `DELIVERED`/`BOUNCED` never update.

@@ -3,7 +3,12 @@ export interface EmailMessage {
   /** Stable per delivery. Forwarded to providers that de-duplicate on it, so a retry after a crash cannot double-send. */
   idempotencyKey?: string;
 }
-export interface EmailProvider { readonly name: string; send(m: EmailMessage): Promise<{ messageId: string }> }
+export interface EmailProvider {
+  readonly name: string;
+  send(m: EmailMessage): Promise<{ messageId: string }>;
+  /** Optional connectivity/credential check that sends nothing (SMTP). */
+  verify?(): Promise<void>;
+}
 
 /** retryable=false for definitive provider rejections (bad key, invalid sender, invalid recipient). */
 export class EmailError extends Error {

@@ -22,7 +22,16 @@ export interface SmtpOptions { from: Sender; host: string; port: number; secure:
 export function smtp(o: SmtpOptions): EmailProvider {
   const t = o.transport ?? nodemailer.createTransport({ host: o.host, port: o.port, secure: o.secure, requireTLS: !o.secure, auth: { user: o.user, pass: o.pass },
     connectionTimeout: 15_000, greetingTimeout: 15_000, socketTimeout: 30_000 });
-  return { name: 'smtp', async send(m: EmailMessage) {
+  return { name: 'smtp',
+    async verify() {
+      try { await t.verify(); }
+      catch (e) {
+        const err = e as { responseCode?: number; code?: string };
+        const hint = err.responseCode === 535 || err.code === 'EAUTH' ? ' (authentication rejected: check SMTP_USER and use an App Password)' : '';
+        throw new EmailError(`smtp: ${err.code ?? 'error'}${err.responseCode ? ` ${err.responseCode}` : ''}${hint}`, false, err.responseCode);
+      }
+    },
+    async send(m: EmailMessage) {
     try {
       const info = await t.sendMail({ from: formatSender(o.from), to: m.to, subject: m.subject, text: m.text, ...(m.html ? { html: m.html } : {}) });
       if ((info.rejected?.length ?? 0) > 0 && (info.accepted?.length ?? 0) === 0) throw new EmailError('smtp: all recipients rejected', false);

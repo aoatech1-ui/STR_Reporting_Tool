@@ -11,7 +11,8 @@
     "migrate": "node src/db/migrate.ts",
     "start": "node src/server/main.ts",
     "worker": "node src/worker/main.ts",
-    "create-admin": "node src/cli/create-admin.ts"
+    "create-admin": "node src/cli/create-admin.ts",
+    "email:test": "node src/cli/email-test.ts"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

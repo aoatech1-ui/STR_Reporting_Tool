@@ -33,6 +33,10 @@ export function createEmailProvider(env: Record<string, string | undefined>, fet
   if (!g('SMTP_USER') || !g('SMTP_PASS')) throw new Error('SMTP_USER and SMTP_PASS are required for SMTP providers');
   if (preset.note) warnings.push(`${id}: ${preset.note}`);
   if (id !== 'ses' && id !== 'custom') warnings.push('Mailbox SMTP is not designed for automated transactional mail: low daily caps, no delivery webhooks, and throttling risk. Prefer Brevo/Resend/Mailjet/MailerSend/Postmark.');
+  if (id !== 'ses' && id !== 'custom' && from.email.toLowerCase() !== g('SMTP_USER').toLowerCase()) {
+    warnings.push(`${id} rewrites or rejects a From address that is not the mailbox (or a verified alias). EMAIL_FROM is ${from.email} but SMTP_USER is ${g('SMTP_USER')}.`);
+  }
+  if (id === 'gmail' && /\s/.test(g('SMTP_PASS')) ) warnings.push('SMTP_PASS contains spaces: remove the spaces Google shows in the 16-character app password.');
   const port = Number(g('SMTP_PORT')) || preset.port;
   return { id, provider: smtp({ from, host, port, secure: g('SMTP_SECURE') ? g('SMTP_SECURE') === 'true' : port === 465, user: g('SMTP_USER'), pass: g('SMTP_PASS') }), warnings };
 }
