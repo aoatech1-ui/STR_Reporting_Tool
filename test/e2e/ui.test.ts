@@ -1,6 +1,7 @@
 import { after, before, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, statSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, readFileSync, statSync } from 'node:fs';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
 import type { FastifyInstance } from 'fastify';
 import { buildApp } from '../../src/server/app.ts';
@@ -9,8 +10,9 @@ import { createOrganization, createUser } from '../../src/repo/orgs.ts';
 import { buildHandlers } from '../../src/worker/handlers.ts';
 import { runOnce } from '../../src/worker/queue.ts';
 import type { EmailProvider } from '../../src/email/types.ts';
-import { CSV, freshDb, skip } from '../db/helper.ts';
+import { CSV, freshDb, skip, tmpStore } from '../db/helper.ts';
 
+const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
 const COST = { N: 1024, r: 8, p: 1 };
 const PW = 'correct horse battery staple';
 const CHROME = process.env.CHROME_PATH ?? '/opt/pw-browsers/chromium';
@@ -20,6 +22,7 @@ function statSafe(p: string) { try { return statSync(p); } catch { return null; 
 
 describe('browser: manager UI end to end', { skip: E2E_SKIP, timeout: 180_000 }, () => {
   let pool: Pool, closeDb: () => Promise<void>, app: FastifyInstance, browser: Browser, ctx: BrowserContext, page: Page, base: string;
+  const files = tmpStore();
   const sent: any[] = [];
   const emailProvider: EmailProvider = { name: 'fake', async send(m) { sent.push(m); return { messageId: `em-${sent.length}` }; } };
   const problems: string[] = [];
@@ -35,14 +38,14 @@ describe('browser: manager UI end to end', { skip: E2E_SKIP, timeout: 180_000 },
     const port = 20000 + Math.floor(Math.random() * 20000);
     base = `http://127.0.0.1:${port}`;
     app = await buildApp({ pool, config: { baseUrl: base, linkSecret: 'x'.repeat(40), cookieSecure: false, trustProxy: false, allowedOrigins: [base], loginRateLimit: 1000, webhook: {}, scryptCost: COST },
-      email: { id: 'fake', provider: emailProvider, warnings: [] } });
+      email: { id: 'fake', provider: emailProvider, warnings: [] }, files });
     await app.listen({ port, host: '127.0.0.1' });
     browser = await chromium.launch({ executablePath: CHROME, args: ['--no-sandbox'] });
     ctx = await browser.newContext({ viewport: { width: 1360, height: 900 } });
     ctx.setDefaultTimeout(10_000);
     page = await ctx.newPage();
     page.on('pageerror', (e) => problems.push(`pageerror: ${e.message}`));
-    page.on('console', (m) => { if (m.type() === 'error' && !/status of (401|403|422)/.test(m.text())) problems.push(`console: ${m.text()}`); });
+    page.on('console', (m) => { if (m.type() === 'error' && !/status of (401|403|415|422)/.test(m.text())) problems.push(`console: ${m.text()}`); });
   });
   after(async () => { await browser?.close(); await app?.close(); await closeDb?.(); });
 
@@ -112,17 +115,43 @@ describe('browser: manager UI end to end', { skip: E2E_SKIP, timeout: 180_000 },
       await page.getByLabel('Vendor').fill(vendor);
       await page.getByLabel('Category').fill(cat);
       await page.getByLabel('Amount ($)').fill(amt);
+      if (vendor === 'Fix-It Roofing') await page.getByLabel('Receipt (optional)').setInputFiles({ name: 'roof receipt.png', mimeType: 'image/png', buffer: PNG });
       await page.getByRole('button', { name: 'Save expense' }).click();
       await page.getByRole('cell', { name: vendor }).waitFor();
     }
     await page.getByRole('cell', { name: '$800.00' }).waitFor();
+    await page.getByText('1 receipt', { exact: true }).waitFor();
+    assert.equal(await page.getByText('Missing', { exact: true }).count(), 2, 'the two expenses over $75 without a receipt are flagged');
     await shot('05-expenses');
+  });
+
+  test('expense detail: attach a receipt, see its thumbnail, remove it, attach again', async () => {
+    page.on('dialog', (d) => d.accept());
+    await page.goto(`${base}/expenses?ym=2026-09`);
+    await page.getByRole('link', { name: 'Costco' }).click();
+    await page.getByText('No receipt attached').waitFor();
+    await page.getByLabel('Attach a receipt').setInputFiles({ name: 'costco.png', mimeType: 'image/png', buffer: PNG });
+    await page.getByText('Receipt attached').waitFor();
+    await page.getByRole('link', { name: 'costco.png' }).waitFor();
+    const img = page.locator('img[src*="/preview"]');
+    await img.waitFor();
+    assert.ok(await img.evaluate((el: HTMLImageElement) => el.complete && el.naturalWidth > 0), 'thumbnail actually loads (CSP allows it)');
+    await shot('05b-expense-receipt');
+    // a non-receipt is refused with a clear message
+    await page.getByLabel('Attach a receipt').setInputFiles({ name: 'evil.png', mimeType: 'image/png', buffer: Buffer.from('<html><script>alert(1)</script>') });
+    await page.getByRole('alert').waitFor();
+    assert.match(await page.getByRole('alert').innerText(), /Unsupported file/);
+    await page.getByRole('button', { name: 'Remove' }).click();
+    await page.getByText('No receipt attached').waitFor();
+    await page.getByLabel('Attach a receipt').setInputFiles({ name: 'costco-again.png', mimeType: 'image/png', buffer: PNG });
+    await page.getByRole('link', { name: 'costco-again.png' }).waitFor();
   });
 
   test('monthly close: exceptions block until acknowledged; finalize locks the month', async () => {
     await page.goto(`${base}/close?ym=2026-09`);
     await page.getByRole('button', { name: 'Generate review' }).click();
     await page.getByText(/not matched to a property/).waitFor();
+    await page.getByText(/1 expense\(s\) of \$75\.00 or more have no receipt attached/).waitFor();
     await page.getByRole('cell', { name: '$4,000.00' }).first().waitFor();
     await shot('06-close-review');
     await page.getByRole('button', { name: 'Finalize September 2026' }).click();
@@ -151,6 +180,13 @@ describe('browser: manager UI end to end', { skip: E2E_SKIP, timeout: 180_000 },
     for (const expect of ['Owner Statement', 'September 2026', 'John Smith', '123 Main Street', 'Net Airbnb payout', '$6,000.00', 'Fix-It Roofing', 'Total property expenses', '$800.00',
       '20% × $6,000.00 = $1,200.00', '$1,200.00', '$4,000.00', 'YTD owner proceeds', 'not tax, legal, or investment advice']) assert.ok(text.includes(expect), `statement contains "${expect}"`);
     await shot('08-statement');
+    const [dl] = await Promise.all([page.waitForEvent('download'), page.getByRole('link', { name: 'Download PDF' }).click()]);
+    const pdfPath = `${SHOTS}/downloaded-statement.pdf`;
+    await dl.saveAs(pdfPath);
+    assert.match(dl.suggestedFilename(), /^STM-202609-[0-9A-F]{8}\.pdf$/);
+    assert.equal(readFileSync(pdfPath).subarray(0, 5).toString(), '%PDF-');
+    const pdfTxt = execFileSync('pdftotext', ['-layout', pdfPath, '-'], { encoding: 'utf8' });
+    for (const must of ['$4,000.00', '$1,200.00', '20% × $6,000.00 = $1,200.00', 'Fix-It Roofing', 'John Smith']) assert.ok(pdfTxt.includes(must), `downloaded PDF contains ${must}`);
     await page.pdf({ path: `${SHOTS}/statement.pdf`, format: 'Letter', printBackground: true });
     assert.ok(statSync(`${SHOTS}/statement.pdf`).size > 5_000, 'PDF rendered');
   });
@@ -158,12 +194,13 @@ describe('browser: manager UI end to end', { skip: E2E_SKIP, timeout: 180_000 },
   test('send → worker → status; owner opens the secure link without logging in', async () => {
     await page.getByRole('button', { name: 'Send to owner' }).click();
     await page.getByText(/Queued for delivery/).waitFor();
-    const h = buildHandlers({ pool, email: emailProvider, whatsapp: null, linkSecret: 'x'.repeat(40), baseUrl: base });
+    const h = buildHandlers({ pool, files, email: emailProvider, whatsapp: null, linkSecret: 'x'.repeat(40), baseUrl: base });
     while (await runOnce(pool, h)) { /* drain */ }
     assert.equal(sent.length, 1);
     await page.reload();
     await page.getByRole('cell', { name: 'Sent', exact: true }).waitFor();
     await page.getByRole('button', { name: 'Resend to owner' }).waitFor();
+    await page.getByText(/PDF archived \(SHA-256/).waitFor();
 
     const url = sent[0].text.match(/https?:\/\/\S+\/view\/\S+/)![0];
     const anon = await browser.newContext({ viewport: { width: 1000, height: 900 } });
@@ -173,6 +210,9 @@ describe('browser: manager UI end to end', { skip: E2E_SKIP, timeout: 180_000 },
     assert.ok((await p2.locator('.doc').innerText()).includes('$4,000.00'));
     assert.equal(await p2.getByRole('link', { name: 'Properties' }).count(), 0, 'no manager navigation on the owner page');
     await p2.screenshot({ path: `${SHOTS}/09-owner-view.png`, fullPage: true });
+    const [odl] = await Promise.all([p2.waitForEvent('download'), p2.getByRole('link', { name: 'Download PDF' }).click()]);
+    await odl.saveAs(`${SHOTS}/owner-statement.pdf`);
+    assert.equal(readFileSync(`${SHOTS}/owner-statement.pdf`).subarray(0, 5).toString(), '%PDF-', 'owner can download the PDF without logging in');
     await p2.goto(url.slice(0, -3) + 'abc');
     await p2.getByText('Link unavailable').waitFor();
     await anon.close();
@@ -188,6 +228,9 @@ describe('browser: manager UI end to end', { skip: E2E_SKIP, timeout: 180_000 },
     const annual = await page.locator('.doc').innerText();
     assert.ok(annual.includes('$4,000.00') && annual.includes('September') && annual.includes('not a tax return'));
     await shot('11-annual');
+    const [adl] = await Promise.all([page.waitForEvent('download'), page.getByRole('link', { name: 'Download PDF' }).click()]);
+    await adl.saveAs(`${SHOTS}/annual.pdf`);
+    assert.ok(execFileSync('pdftotext', ['-layout', `${SHOTS}/annual.pdf`, '-'], { encoding: 'utf8' }).includes('$4,000.00'));
     await page.goto(`${base}/?ym=2026-09`);
     await page.getByText('Owner distributions').waitFor();
     await page.getByText('Needs attention').waitFor();

@@ -8,11 +8,11 @@ export const setCsrf = (t: string) => { csrf = t; };
 let onUnauthorized: () => void = () => {};
 export const setUnauthorizedHandler = (f: () => void) => { onUnauthorized = f; };
 
-async function request<T = any>(method: string, url: string, body?: unknown): Promise<T> {
+async function request<T = any>(method: string, url: string, body?: unknown, raw?: File): Promise<T> {
   const res = await fetch(url, {
     method, credentials: 'same-origin',
-    headers: { ...(body !== undefined ? { 'content-type': 'application/json' } : {}), ...(method !== 'GET' && csrf ? { 'x-csrf-token': csrf } : {}) },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
+    headers: { ...(raw ? { 'content-type': raw.type || 'application/octet-stream' } : body !== undefined ? { 'content-type': 'application/json' } : {}), ...(method !== 'GET' && csrf ? { 'x-csrf-token': csrf } : {}) },
+    body: raw ?? (body !== undefined ? JSON.stringify(body) : undefined),
   });
   const text = await res.text();
   let data: any = null;
@@ -31,6 +31,8 @@ export const api = {
   post: <T = any>(url: string, body: unknown = {}) => request<T>('POST', url, body),
   patch: <T = any>(url: string, body: unknown) => request<T>('PATCH', url, body),
   del: <T = any>(url: string) => request<T>('DELETE', url),
+  /** Sends a file as the raw request body (receipts). The server decides the real type from the bytes. */
+  upload: <T = any>(url: string, file: File) => request<T>('PUT', url, undefined, file),
 };
 
 export const qs = (o: Record<string, string | number | undefined | null>) => {

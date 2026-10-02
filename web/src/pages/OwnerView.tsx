@@ -13,7 +13,7 @@ export function OwnerView() {
         <div className="login-wrap"><div className="login"><h1>Link unavailable</h1><p className="muted">This statement link is invalid or has expired. Please contact your property manager for a new link.</p></div></div>
       ) : (
         <Loaded q={q}>{(d) => (<>
-          <div className="public-bar"><b>{d.organization}</b><span className="actions"><button className="btn" onClick={() => window.print()}>Print / Save as PDF</button><a className="btn" href={`/s/${token}/csv`}>Download CSV</a></span></div>
+          <div className="public-bar"><b>{d.organization}</b><span className="actions"><a className="btn primary" href={`/s/${token}/pdf`}>Download PDF</a><a className="btn" href={`/s/${token}/csv`}>Download CSV</a><button className="btn" onClick={() => window.print()}>Print</button></span></div>
           <StatementDoc orgName={d.organization} statementNumber={d.statementNumber} ownerName={d.owner} propertyName={d.property} statement={d.statement} ytd={d.ytd} disclaimer={d.disclaimer} />
         </>)}</Loaded>
       )}

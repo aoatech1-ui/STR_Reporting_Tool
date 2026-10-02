@@ -6,7 +6,7 @@ import { verifyLink } from '../../delivery/links.ts';
 import { parseEmailWebhook, WebhookAuthError } from '../../email/webhooks.ts';
 import { appendAudit } from '../../repo/audit.ts';
 import { applyDeliveryWebhook } from '../../repo/deliveries.ts';
-import { computeYtd } from '../../accounting/statement.ts';
+import { loadStatementDoc, statementPdf } from '../../services/documents.ts';
 import { getOrganization } from '../../repo/orgs.ts';
 import { loadStatements, statementOrg } from '../../repo/statements.ts';
 import type { Ctx } from '../app.ts';
@@ -32,11 +32,15 @@ export async function publicRoutes(app: FastifyInstance, c: Ctx) {
     if (!r) return reply.code(404).send({ error: 'This link is invalid or has expired' });
     await withTx(c.pool, (tx) => appendAudit(tx, r.orgId, { userId: null, action: 'STATEMENT_VIEWED', entityType: 'owner_statement', entityId: r.s.id, oldValue: null, newValue: null, meta: { ip: req.ip } }));
     reply.header('x-robots-tag', 'noindex');
-    const { s } = r;
-    const prior = (await loadStatements(c.pool, r.orgId, { year: s.statement.year, throughMonth: s.statement.month, propertyId: s.propertyId, statuses: ['FINALIZED', 'LOCKED'] }))
-      .filter((x) => x.id !== s.id).map((x) => x.statement);
-    return { ytd: computeYtd([...prior, s.statement], s.statement.year, s.statement.month), organization: (await getOrganization(c.pool, r.orgId)).displayName, statementNumber: s.statementNumber, owner: s.ownerName, property: s.propertyName, year: s.statement.year, month: s.statement.month,
-      statement: s.statement, disclaimer: STATEMENT_DISCLAIMER };
+    const d = (await loadStatementDoc(c.pool, r.orgId, r.s.id, ['FINALIZED', 'LOCKED']))!;
+    return { organization: d.organization.displayName, ytd: d.ytd, statementNumber: d.stored.statementNumber, owner: d.stored.ownerName, property: d.stored.propertyName,
+      year: d.stored.statement.year, month: d.stored.statement.month, statement: d.stored.statement, disclaimer: d.disclaimer };
+  });
+  app.get('/s/:token/pdf', { config: limit }, async (req, reply) => {
+    const r = await resolve((req.params as { token: string }).token);
+    if (!r) return reply.code(404).send({ error: 'This link is invalid or has expired' });
+    const f = await statementPdf(c.pool, c.files, r.orgId, r.s.id, ['FINALIZED', 'LOCKED']);
+    return reply.header('content-type', 'application/pdf').header('content-disposition', `attachment; filename="${f.filename}"`).header('x-robots-tag', 'noindex').send(f.bytes);
   });
   app.get('/s/:token/csv', { config: limit }, async (req, reply) => {
     const r = await resolve((req.params as { token: string }).token);

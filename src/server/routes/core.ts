@@ -7,6 +7,9 @@ import { listCategories } from '../../repo/orgs.ts';
 import { createOwner, getOwner, listOwners, updateOwner } from '../../repo/owners.ts';
 import { getPeriod } from '../../repo/periods.ts';
 import { createProperty, getProperty, listProperties, listRules, setCommissionRule, updateProperty } from '../../repo/properties.ts';
+import { deleteReceipt, readReceipt, uploadReceipt } from '../../services/receipts.ts';
+import { listReceipts } from '../../repo/receipts.ts';
+import { RECEIPT_THRESHOLD_CENTS } from '../../accounting/exceptions.ts';
 import { auth } from '../guard.ts';
 import type { Ctx } from '../app.ts';
 
@@ -87,17 +90,18 @@ export async function coreRoutes(app: FastifyInstance, c: Ctx) {
     let periodId: string | undefined;
     if (q.ym) {
       const p = await getPeriod(c.pool, a.orgId, +q.ym.slice(0, 4), +q.ym.slice(5));
-      if (!p) return { expenses: [], totals: { chargedCents: 0, ownerPaidCents: 0 } };
+      if (!p) return { expenses: [], totals: { chargedCents: 0, ownerPaidCents: 0 }, receiptThresholdCents: RECEIPT_THRESHOLD_CENTS };
       periodId = p.id;
     }
     const expenses = await listExpenses(c.pool, a.orgId, { periodId, propertyId: q.propertyId, ownerId: q.ownerId });
     const tot = (paid: boolean) => expenses.filter((e) => e.ownerPaid === paid).reduce((acc, e) => acc + e.amountCents + e.taxCents, 0);
-    return { expenses, totals: { chargedCents: tot(false), ownerPaidCents: tot(true) } };
+    return { expenses, totals: { chargedCents: tot(false), ownerPaidCents: tot(true) }, receiptThresholdCents: RECEIPT_THRESHOLD_CENTS };
   });
   app.get('/api/expenses/:id', { preHandler: g('read') }, async (req) => {
-    const e = await getExpense(c.pool, auth(req).orgId, Id.parse(req.params).id);
+    const a = auth(req);
+    const e = await getExpense(c.pool, a.orgId, Id.parse(req.params).id);
     if (!e) throw new UserError('Expense not found');
-    return { expense: e };
+    return { expense: e, receipts: (await listReceipts(c.pool, a.orgId, e.id)).map(({ storageKey: _k, ...r }) => r) };
   });
   app.post('/api/expenses', { preHandler: g('expenses:write') }, async (req, reply) => {
     const a = auth(req); const b = ExpenseBody.parse(req.body);
@@ -111,12 +115,37 @@ export async function coreRoutes(app: FastifyInstance, c: Ctx) {
   });
   app.delete('/api/expenses/:id', { preHandler: g('expenses:write') }, async (req) => {
     const a = auth(req);
-    await withTx(c.pool, (tx) => deleteExpense(tx, a.orgId, a.id, Id.parse(req.params).id));
+    const keys = await withTx(c.pool, (tx) => deleteExpense(tx, a.orgId, a.id, Id.parse(req.params).id));
+    for (const k of keys) await c.files.delete(k).catch(() => {}); // after commit; a leftover blob is harmless
     return { ok: true };
   });
   app.post('/api/expenses/:id/reverse', { preHandler: g('expenses:write') }, async (req, reply) => {
     const a = auth(req); const { id } = Id.parse(req.params);
     const b = z.object({ intoMonth: Ym, reason: z.string().min(3).max(500) }).strict().parse(req.body);
     return reply.code(201).send({ id: await withTx(c.pool, (tx) => reverseExpense(tx, a.orgId, a.id, id, b.intoMonth, b.reason)) });
+  });
+
+  // Raw-body upload (PDF/PNG/JPEG/WebP, <=10 MB). Auth runs in onRequest so an unauthenticated client is refused before the body is read.
+  app.put('/api/expenses/:id/receipt', { onRequest: g('expenses:write'), bodyLimit: 10 * 1024 * 1024, config: { rateLimit: { max: 60, timeWindow: '1 minute' } } }, async (req, reply) => {
+    const a = auth(req); const { id } = Id.parse(req.params);
+    const { filename } = z.object({ filename: z.string().max(300).optional() }).parse(req.query);
+    const r = await uploadReceipt(c.pool, c.files, a.orgId, a.id, id, filename, req.body as Buffer);
+    return reply.code(201).send({ receipt: r });
+  });
+  app.get('/api/receipts/:id', { preHandler: g('read') }, async (req, reply) => {
+    const { att, bytes } = await readReceipt(c.pool, c.files, auth(req).orgId, Id.parse(req.params).id);
+    // Always a download, with sniffing disabled: an uploaded file can never be rendered as a page in our origin.
+    return reply.header('content-type', att.contentType).header('content-disposition', `attachment; filename="${att.filename.replace(/[^\x20-\x7E]/g, '_').replace(/"/g, "'")}"`)
+      .header('x-content-type-options', 'nosniff').send(bytes);
+  });
+  app.get('/api/receipts/:id/preview', { preHandler: g('read') }, async (req, reply) => {
+    const { att, bytes } = await readReceipt(c.pool, c.files, auth(req).orgId, Id.parse(req.params).id);
+    if (!att.contentType.startsWith('image/')) throw new UserError('Preview is only available for images', 415);
+    return reply.header('content-type', att.contentType).header('content-disposition', 'inline').header('x-content-type-options', 'nosniff').send(bytes);
+  });
+  app.delete('/api/receipts/:id', { preHandler: g('expenses:write') }, async (req) => {
+    const a = auth(req);
+    await deleteReceipt(c.pool, c.files, a.orgId, a.id, Id.parse(req.params).id);
+    return { ok: true };
   });
 }

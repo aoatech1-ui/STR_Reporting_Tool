@@ -38,7 +38,7 @@ function Users() {
         <td className="r"><button className="btn sm" onClick={() => setReset(u)}>Reset password</button> {u.id !== user?.id && <button className="btn sm" onClick={() => patch(u.id, { active: !u.active })}>{u.active ? 'Deactivate' : 'Reactivate'}</button>}</td></tr>)}</tbody></table>}</Loaded>
     <div style={{ padding: '10px 18px' }} className="muted small">{ROLES.map((r) => <div key={r}><b>{r.charAt(0) + r.slice(1).toLowerCase()}:</b> {ROLE_HELP[r]}</div>)}</div>
     {adding && <Modal title="Add user" onClose={() => setAdding(false)}><form onSubmit={async (e) => { e.preventDefault(); if (await run(async () => { await api.post('/api/users', nv); return true; })) { setAdding(false); toast('User added'); q.reload(); setNv({ name: '', email: '', role: 'MANAGER', password: '' }); } }}>
-      {error && <div className="alert bad">{error}</div>}
+      {error && <div className="alert bad" role="alert">{error}</div>}
       <div className="form-grid"><Field label="Name"><input value={nv.name} onChange={(e) => setNv({ ...nv, name: e.target.value })} required /></Field><Field label="Email"><input type="email" value={nv.email} onChange={(e) => setNv({ ...nv, email: e.target.value })} required /></Field>
         <Field label="Role"><select value={nv.role} onChange={(e) => setNv({ ...nv, role: e.target.value })}>{ROLES.map((r) => <option key={r} value={r}>{r.charAt(0) + r.slice(1).toLowerCase()}</option>)}</select></Field>
         <Field label="Temporary password" hint="At least 12 characters"><input type="password" autoComplete="new-password" value={nv.password} onChange={(e) => setNv({ ...nv, password: e.target.value })} required minLength={12} /></Field></div>

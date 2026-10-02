@@ -1,3 +1,4 @@
+import { UserError } from '../errors.ts';
 import type { Db, Tx } from '../db/pool.ts';
 import type { Statement } from '../accounting/statement.ts';
 
@@ -62,4 +63,23 @@ export async function statementOrg(db: Db, id: string): Promise<string | null> {
   if (!/^[0-9a-f-]{36}$/i.test(id)) return null;
   const r = await db.query('SELECT organization_id FROM owner_statements WHERE id=$1', [id]);
   return r.rows[0]?.organization_id ?? null;
+}
+
+import { mapAttachment, type AttachmentRow } from './attachments.ts';
+
+export async function getStatementFiles(db: Db, orgId: string, id: string): Promise<{ pdf: AttachmentRow | null; csv: AttachmentRow | null }> {
+  const r = await db.query(
+    `SELECT s.pdf_attachment_id, s.csv_attachment_id FROM owner_statements s WHERE s.id=$1 AND s.organization_id=$2`, [id, orgId]);
+  const row = r.rows[0];
+  if (!row) return { pdf: null, csv: null };
+  const a = await db.query('SELECT * FROM attachments WHERE id = ANY($1::uuid[])', [[row.pdf_attachment_id, row.csv_attachment_id].filter(Boolean)]);
+  const by = new Map(a.rows.map((x) => [x.id, mapAttachment(x)]));
+  return { pdf: by.get(row.pdf_attachment_id) ?? null, csv: by.get(row.csv_attachment_id) ?? null };
+}
+
+/** Sets the file links once (NULL -> value). The DB trigger refuses any later change. */
+export async function attachStatementFiles(tx: Tx, orgId: string, id: string, pdfId: string, csvId: string): Promise<void> {
+  const r = await tx.query(
+    `UPDATE owner_statements SET pdf_attachment_id=COALESCE(pdf_attachment_id,$3), csv_attachment_id=COALESCE(csv_attachment_id,$4) WHERE id=$1 AND organization_id=$2`, [id, orgId, pdfId, csvId]);
+  if (!r.rowCount) throw new UserError('Statement not found');
 }

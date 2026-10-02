@@ -69,6 +69,6 @@ export async function authRoutes(app: FastifyInstance, c: Ctx) {
   });
 
   app.get("/api/settings/email", { preHandler: c.guard("users:manage") }, async (req) => ({
-    configured: !!c.email, provider: c.email?.id ?? null, warnings: c.email?.warnings ?? [], jobs: await getJobStats(c.pool, auth(req).orgId), webhooksConfigured: !!(c.config.webhook.token || c.config.webhook.signingSecret),
+    configured: !!c.email, provider: c.email?.id ?? null, warnings: c.email?.warnings ?? [], jobs: await getJobStats(c.pool, auth(req).orgId), webhooksConfigured: !!(c.config.webhook.token || c.config.webhook.signingSecret), storage: c.files.kind,
   }));
 }

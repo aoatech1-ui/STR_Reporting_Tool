@@ -9,7 +9,7 @@ import { createOrganization, createUser } from '../../src/repo/orgs.ts';
 import { buildHandlers } from '../../src/worker/handlers.ts';
 import { runOnce } from '../../src/worker/queue.ts';
 import type { EmailProvider } from '../../src/email/types.ts';
-import { CSV, freshDb, skip } from './helper.ts';
+import { CSV, freshDb, skip, tmpStore } from './helper.ts';
 
 const COST = { N: 1024, r: 8, p: 1 };
 const PW = 'correct horse battery staple';
@@ -44,7 +44,8 @@ describe('HTTP API', { skip }, () => {
   const emailProvider: EmailProvider = { name: 'fake', async send(m) { sent.push(m); return { messageId: `em-${sent.length}` }; } };
   const orgA: Record<string, string> = {}, orgB: Record<string, string> = {};
   const as = async (email: string) => { const c = new Client(app); const r = await c.login(email); assert.equal(r.statusCode, 200, `login ${email}`); return c; };
-  const runWorker = async () => { const h = buildHandlers({ pool, email: emailProvider, whatsapp: null, linkSecret: 'x'.repeat(40), baseUrl: 'https://app.test', now: () => clock.t }); while (await runOnce(pool, h)) { /* drain */ } };
+  const files = tmpStore();
+  const runWorker = async () => { const h = buildHandlers({ pool, files, email: emailProvider, whatsapp: null, linkSecret: 'x'.repeat(40), baseUrl: 'https://app.test', now: () => clock.t }); while (await runOnce(pool, h)) { /* drain */ } };
 
   before(async () => {
     ({ pool, close } = await freshDb());
@@ -57,7 +58,7 @@ describe('HTTP API', { skip }, () => {
         }
       });
     }
-    app = await buildApp({ pool, config: config(), email: { id: 'brevo', provider: emailProvider, warnings: [] }, now });
+    app = await buildApp({ pool, config: config(), email: { id: 'brevo', provider: emailProvider, warnings: [] }, files, now });
   });
   after(async () => { await app.close(); await close(); });
 

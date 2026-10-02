@@ -12,7 +12,7 @@ export function Annual() {
   const set = (o: Record<string, string>) => setSp({ year, ownerId, ...o });
   return (
     <Page title="Annual reports" sub="Year-end summary of income, expenses, commissions and owner proceeds"
-      actions={q.data && <><button className="btn" onClick={() => window.print()}>Print / Save as PDF</button><a className="btn" href={`/api/exports/annual.csv?year=${year}&ownerId=${ownerId}`}>Download CSV</a></>}>
+      actions={q.data && <><a className="btn primary" href={`/api/annual.pdf?year=${year}&ownerId=${ownerId}`}>Download PDF</a><a className="btn" href={`/api/exports/annual.csv?year=${year}&ownerId=${ownerId}`}>Download CSV</a><button className="btn" onClick={() => window.print()}>Print</button></>}>
       <div className="toolbar no-print">
         <label className="inline-field"><span>Year</span><input type="number" min={2000} max={2100} value={year} onChange={(e) => set({ year: e.target.value })} style={{ width: 90 }} /></label>
         <label className="inline-field"><span>Owner</span><select value={ownerId} onChange={(e) => set({ ownerId: e.target.value })}><option value="">Select an owner…</option>{(owners.data?.owners ?? []).map((o: any) => <option key={o.id} value={o.id}>{o.displayName}</option>)}</select></label>

@@ -4,11 +4,18 @@ import { signLink } from '../delivery/links.ts';
 import { EmailError, type EmailProvider } from '../email/types.ts';
 import { appendAudit } from '../repo/audit.ts';
 import { loadStatements } from '../repo/statements.ts';
+import { PermanentError } from '../errors.ts';
+import type { FileStore } from '../files/store.ts';
+import { renderStatementPdf } from '../pdf/render.ts';
+import { insertAttachment } from '../repo/attachments.ts';
+import { attachStatementFiles, getStatementFiles } from '../repo/statements.ts';
+import { loadStatementDoc, sha256, statementCsv } from '../services/documents.ts';
+import { STATEMENT_FILES_JOB } from '../services/close.ts';
 import { DELIVERY_JOB, ownerTarget } from '../services/send.ts';
 import { getOwner } from '../repo/owners.ts';
 import type { Handler, Job } from './queue.ts';
 
-export interface DeliveryDeps { pool: Pool; email: EmailProvider | null; whatsapp: WhatsAppProvider | null; linkSecret: string; baseUrl: string; now?: () => number; whatsappIncludeSummary?: boolean }
+export interface DeliveryDeps { pool: Pool; files: FileStore; email: EmailProvider | null; whatsapp: WhatsAppProvider | null; linkSecret: string; baseUrl: string; now?: () => number; whatsappIncludeSummary?: boolean }
 
 /**
  * Sends one QUEUED delivery. Idempotent: a delivery that is no longer QUEUED is skipped, so a duplicate job or a retry after
@@ -61,4 +68,33 @@ export function deliveryHandler(d: DeliveryDeps): Handler {
   };
 }
 
-export const buildHandlers = (d: DeliveryDeps): Record<string, Handler> => ({ [DELIVERY_JOB]: deliveryHandler(d) });
+/**
+ * Renders the finalized statement's PDF and CSV once, stores them, records size + SHA-256, and links them to the statement.
+ * Idempotent: a statement that already has its files is skipped; storage keys are deterministic so a retry overwrites safely.
+ */
+export function statementFilesHandler(d: DeliveryDeps): Handler {
+  return {
+    async run(job) {
+      const { statementId, orgId } = job.payload as { statementId: string; orgId?: string };
+      const org = orgId ?? job.orgId;
+      if (!org) throw new PermanentError('Job has no organization');
+      const doc = await loadStatementDoc(d.pool, org, statementId, ['FINALIZED', 'LOCKED']);
+      if (!doc) throw new PermanentError('Statement not found or not finalized');
+      const existing = await getStatementFiles(d.pool, org, statementId);
+      if (existing.pdf && existing.csv) return;
+      const pdf = await renderStatementPdf(doc.pdf), csv = Buffer.from(statementCsv(doc.stored), 'utf8');
+      const base = `${org}/statements/${statementId}/${doc.stored.statementNumber}`;
+      await d.files.put(`${base}.pdf`, pdf, 'application/pdf');
+      await d.files.put(`${base}.csv`, csv, 'text/csv');
+      await withTx(d.pool, async (tx) => {
+        const pdfId = await insertAttachment(tx, org, null, { storageKey: `${base}.pdf`, filename: `${doc.stored.statementNumber}.pdf`, contentType: 'application/pdf', sizeBytes: pdf.length, sha256: sha256(pdf) });
+        const csvId = await insertAttachment(tx, org, null, { storageKey: `${base}.csv`, filename: `${doc.stored.statementNumber}.csv`, contentType: 'text/csv', sizeBytes: csv.length, sha256: sha256(csv) });
+        await attachStatementFiles(tx, org, statementId, pdfId, csvId);
+        await appendAudit(tx, org, { userId: null, action: 'STATEMENT_FILES_GENERATED', entityType: 'owner_statement', entityId: statementId, oldValue: null,
+          newValue: { pdfSha256: sha256(pdf), pdfBytes: pdf.length, csvSha256: sha256(csv) } });
+      });
+    },
+  };
+}
+
+export const buildHandlers = (d: DeliveryDeps): Record<string, Handler> => ({ [DELIVERY_JOB]: deliveryHandler(d), [STATEMENT_FILES_JOB]: statementFilesHandler(d) });

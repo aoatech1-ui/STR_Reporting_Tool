@@ -7,3 +7,9 @@ export class UserError extends Error {
     this.status = status ?? (/not found$/i.test(message) ? 404 : 422);
   }
 }
+
+/** A failure retrying cannot fix. The job queue gives up immediately instead of backing off. */
+export class PermanentError extends Error {
+  readonly retryable = false;
+  constructor(message: string) { super(message); this.name = 'PermanentError'; }
+}

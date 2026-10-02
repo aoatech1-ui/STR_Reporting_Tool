@@ -39,6 +39,10 @@ export function Integrations() {
             {d.warnings.map((w: string, i: number) => <Note key={i} tone="warn">{w}</Note>)}
             <dl className="dl"><dt>Delivery webhooks</dt><dd>{d.webhooksConfigured ? <Badge tone="good">Configured</Badge> : <Badge>Not configured: statuses stay at “Sent”</Badge>}</dd></dl>
           </Card>
+          <Card title={<>File storage <Badge tone={d.storage === 's3' ? 'good' : 'warn'}>{d.storage === 's3' ? 'S3-compatible' : 'Server disk'}</Badge></>}>
+            <p style={{ marginTop: 0 }} className="muted">Receipts and the archived PDF/CSV of every finalized statement are stored here. Each file's SHA-256 is recorded and checked on download.</p>
+            {d.storage !== 's3' && <Note tone="warn">Files are on this server's disk. Use a persistent volume and back it up, or switch to S3-compatible storage (<code>FILE_STORE=s3</code>).</Note>}
+          </Card>
           <Card title="Background jobs"><dl className="dl">{['QUEUED', 'RUNNING', 'DONE', 'FAILED'].map((k) => <><dt key={k + 't'}>{k.charAt(0) + k.slice(1).toLowerCase()}</dt><dd key={k}>{d.jobs[k] ?? 0}</dd></>)}</dl>
             <p className="muted small" style={{ marginBottom: 0 }}>Queued jobs are sent by the worker process. If queued stays above zero, check that the worker is running.</p></Card></>)}</Loaded>
         <Card title={<>WhatsApp <Badge>Not configured</Badge></>}><p style={{ margin: 0 }} className="muted">Owner opt-in and message rules are in place; connecting an approved WhatsApp Business provider is a separate setup step. Messages never contain dollar amounts by default.</p></Card>

@@ -121,12 +121,40 @@ Principles: **the browser never calculates money.** Every figure (statement line
 only formatted client-side; typed dollar amounts are converted to integer cents at the form boundary and validated again by the server.
 Buttons a role cannot use are hidden (permissions come from `/api/auth/me`), but the server enforces them regardless.
 
-"Download PDF" is **Print / Save as PDF** using the browser's print dialog with a dedicated print stylesheet; server-side PDF generation is not built.
-Receipt attachments are not built yet (the expense form has no upload).
+"Download PDF" fetches the server-rendered PDF; **Print** still uses the browser's print dialog with a dedicated print stylesheet.
+
+### PDFs and receipts (added)
+
+**Server-side PDFs** (`src/pdf/render.ts`, `pdfkit`, no browser needed). Statement and annual-report PDFs are laid out from the same server-calculated
+snapshot as the on-screen statement: letter size, repeating table headers, page X of Y, a diagonal DRAFT watermark on unfinalized statements, and
+keep-together rules so the owner summary never splits across pages. Output is **deterministic**: the same statement renders to the same bytes.
+Standard PDF fonts are used, which cover Latin-1 (accents are fine); characters outside it (e.g. CJK) print as `?` rather than as garbage.
+
+| Endpoint | Who | Notes |
+|---|---|---|
+| `GET /api/statements/:id/pdf` | any signed-in role | Archived file if present and its SHA-256 verifies; otherwise rendered on demand |
+| `GET /api/annual.pdf?year&ownerId` | any signed-in role | Finalized statements only |
+| `GET /s/:token/pdf` | owner, via signed link | Finalized statements only; expired/tampered links 404 |
+
+**Archive.** Finalizing a month enqueues one `generate_statement_files` job per statement. The worker renders the PDF and CSV, stores both, records size and
+SHA-256, links them to the statement, and writes an audit entry. A database trigger lets those two links be set **once** and never changed.
+If a stored file is ever corrupted or missing, the download falls back to a fresh render of the immutable snapshot instead of serving bad bytes.
+
+**Receipts.** `PUT /api/expenses/:id/receipt?filename=` with the raw file as the body (PDF, PNG, JPEG or WebP, up to 10 MB, up to 10 per expense).
+- The type is decided from the file's **bytes**, never its name or declared type, so HTML/SVG/executables are refused whatever they claim to be.
+- Storage keys are server-generated (`<org>/receipts/<uuid>.<ext>`); the user's filename is display-only and sanitized.
+- Downloads are always `attachment` with `nosniff`; each file's SHA-256 is checked on read.
+- Receipts can be **added** to an expense in a closed month (documentation changes no figure) but can only be **removed** while the month is open.
+- Expenses of $75.00 or more without a receipt raise a `MISSING_RECEIPT` warning in the monthly close and show a Missing badge in the expense list.
+- Uploads authenticate before the body is read, are rate-limited, and need the CSRF token like every other write.
+
+**Storage** is pluggable: `FILE_STORE=local` (a directory on a persistent, backed-up volume) or `FILE_STORE=s3` for any S3-compatible service
+(AWS S3, Cloudflare R2, Backblaze B2, DigitalOcean Spaces, MinIO). See `.env.example`. The S3 client is exercised in tests against a local
+S3-compatible server; it has not been run against a live cloud bucket, so test one upload and one download before relying on it.
 
 ### Tests
 `npm run test:e2e` drives a real Chromium through the whole manager journey (login, owner, property, import, expenses, close, preview, send,
-owner link, annual report, viewer permissions, phone layout) against a real Postgres, saves screenshots, renders the statement to PDF,
+receipt upload and removal, PDF downloads whose text is checked, owner link, annual report, viewer permissions, phone layout) against a real Postgres, saves screenshots, renders the statement to PDF,
 and fails on any JavaScript error or CSP violation. It uses the Chromium at `/opt/pw-browsers/chromium` (override with `CHROME_PATH`).
 
 ## Design decisions
@@ -171,5 +199,5 @@ Unit tests cover import, duplicate detection, expenses, commission, statements, 
 acceptance scenario ($6,000 − $500 − $100 − $200 − 20% = **$4,000**).
 
 ## Not built yet (next)
-Server-side PDF rendering, S3 receipt storage, a WhatsApp provider adapter (the delivery path and opt-in rules exist), annual report generator,
+A WhatsApp provider adapter (the delivery path and opt-in rules exist), annual report generator,
 recurring/scheduled jobs, MFA, owner portal (Phase 2).

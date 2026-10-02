@@ -6,13 +6,10 @@ import { getDashboard } from '../../repo/dashboard.ts';
 import { listAudit, verifyAuditChain } from '../../repo/audit.ts';
 import { listDeliveries } from '../../repo/deliveries.ts';
 import { getPeriod, listPeriods, monthRange } from '../../repo/periods.ts';
-import { computeYtd, STATEMENT_DISCLAIMER } from '../../accounting/statement.ts';
-import { buildAnnualReport } from '../../accounting/annual.ts';
+import { loadStatementDoc, statementPdf, annualDoc, annualPdf } from '../../services/documents.ts';
+import { getStatementFiles } from '../../repo/statements.ts';
 import { listAllDeliveries } from '../../repo/deliveries.ts';
 import { listImportBatches, listRevenue } from '../../repo/earnings.ts';
-import { getOrganization, } from '../../repo/orgs.ts';
-import { getProperty } from '../../repo/properties.ts';
-import { getOwner } from '../../repo/owners.ts';
 import { loadStatements, type StatementStatus } from '../../repo/statements.ts';
 import { confirmCsvImport, previewCsvImport } from '../../services/import.ts';
 import { finalizePeriod, generateStatements } from '../../services/close.ts';
@@ -74,17 +71,20 @@ export async function accountingRoutes(app: FastifyInstance, c: Ctx) {
   });
   app.get('/api/statements/:id', { preHandler: g('read') }, async (req) => {
     const a = auth(req); const { id } = Id.parse(req.params);
-    const [s] = await loadStatements(c.pool, a.orgId, { id });
-    if (!s) throw new UserError('Statement not found');
-    // YTD = this statement + the property's finalized statements earlier in the same year (so a draft previews its eventual YTD)
-    const prior = (await loadStatements(c.pool, a.orgId, { year: s.statement.year, throughMonth: s.statement.month, propertyId: s.propertyId, statuses: ['FINALIZED', 'LOCKED'] }))
-      .filter((x) => x.id !== s.id).map((x) => x.statement);
+    const d = await loadStatementDoc(c.pool, a.orgId, id);
+    if (!d) throw new UserError('Statement not found');
+    const files = await getStatementFiles(c.pool, a.orgId, id);
     return {
-      statement: { ...summary(s), detail: s.statement, generatedAt: s.generatedAt },
-      ytd: computeYtd([...prior, s.statement], s.statement.year, s.statement.month),
-      organization: await getOrganization(c.pool, a.orgId), property: await getProperty(c.pool, a.orgId, s.propertyId), owner: await getOwner(c.pool, a.orgId, s.ownerId),
-      deliveries: await listDeliveries(c.pool, id), disclaimer: STATEMENT_DISCLAIMER,
+      statement: { ...summary(d.stored), detail: d.stored.statement, generatedAt: d.stored.generatedAt },
+      ytd: d.ytd, organization: d.organization, property: d.property, owner: d.owner, disclaimer: d.disclaimer,
+      deliveries: await listDeliveries(c.pool, id),
+      files: { pdfArchived: !!files.pdf, pdfSha256: files.pdf?.sha256 ?? null, pdfBytes: files.pdf?.sizeBytes ?? null },
     };
+  });
+  app.get('/api/statements/:id/pdf', { preHandler: g('read') }, async (req, reply) => {
+    const a = auth(req);
+    const f = await statementPdf(c.pool, c.files, a.orgId, Id.parse(req.params).id);
+    return reply.header('content-type', 'application/pdf').header('content-disposition', `attachment; filename="${f.filename}"`).send(f.bytes);
   });
   app.get('/api/statements/:id/csv', { preHandler: g('read') }, async (req, reply) => {
     const a = auth(req); const { id } = Id.parse(req.params);
@@ -131,14 +131,16 @@ export async function accountingRoutes(app: FastifyInstance, c: Ctx) {
     const q = z.object({ status: z.enum(['QUEUED', 'SENT', 'DELIVERED', 'BOUNCED', 'FAILED']).optional(), limit: z.coerce.number().int().min(1).max(500).optional() }).parse(req.query);
     return { deliveries: await listAllDeliveries(c.pool, auth(req).orgId, q) };
   });
+  const AnnualQ = z.object({ year: z.coerce.number().int().min(2000).max(2100), ownerId: z.uuid(), propertyId: z.uuid().optional() });
   app.get('/api/annual', { preHandler: g('read') }, async (req) => {
-    const a = auth(req);
-    const q = z.object({ year: z.coerce.number().int().min(2000).max(2100), ownerId: z.uuid(), propertyId: z.uuid().optional() }).parse(req.query);
-    const owner = await getOwner(c.pool, a.orgId, q.ownerId);
-    if (!owner) throw new UserError('Owner not found');
-    const rows = await loadStatements(c.pool, a.orgId, { year: q.year, ownerId: q.ownerId, propertyId: q.propertyId, statuses: ['FINALIZED', 'LOCKED'] });
-    return { organization: await getOrganization(c.pool, a.orgId), owner: { id: owner.id, displayName: owner.displayName, legalName: owner.legalName },
-      properties: [...new Set(rows.map((r) => r.propertyName))].sort(), report: buildAnnualReport(q.year, rows.map((r) => r.statement)) };
+    const q = AnnualQ.parse(req.query);
+    const d = await annualDoc(c.pool, auth(req).orgId, q.year, q.ownerId, q.propertyId);
+    return { organization: d.organization, owner: { id: d.owner.id, displayName: d.owner.displayName, legalName: d.owner.legalName }, properties: d.properties, report: d.report };
+  });
+  app.get('/api/annual.pdf', { preHandler: g('read') }, async (req, reply) => {
+    const q = AnnualQ.parse(req.query);
+    const bytes = await annualPdf(c.pool, auth(req).orgId, q.year, q.ownerId, q.propertyId, c.now().toISOString());
+    return reply.header('content-type', 'application/pdf').header('content-disposition', `attachment; filename="annual-statement-${q.year}.pdf"`).send(bytes);
   });
 
   app.get('/api/dashboard', { preHandler: g('read') }, async (req) => {

@@ -24,10 +24,12 @@ export function StatementPreview() {
         return (<>
           <div className="toolbar no-print">
             <StatusBadge status={st.status} />
-            <button className="btn" onClick={() => window.print()}>Print / Save as PDF</button>
+            <a className="btn primary" href={`/api/statements/${st.id}/pdf`}>Download PDF</a>
             <a className="btn" href={`/api/statements/${st.id}/csv`}>Download CSV</a>
-            {can('statements:send') && final && <button className="btn primary" disabled={busy} onClick={() => send(sent)}>{sent ? 'Resend to owner' : 'Send to owner'}</button>}
+            <button className="btn" onClick={() => window.print()}>Print</button>
+            {can('statements:send') && final && <button className="btn" disabled={busy} onClick={() => send(sent)}>{sent ? 'Resend to owner' : 'Send to owner'}</button>}
             {!final && <span className="muted small">Finalize the month to send this statement.</span>}
+            {final && <span className="muted small">{d.files.pdfArchived ? `PDF archived (SHA-256 ${d.files.pdfSha256.slice(0, 12)}…)` : 'PDF is being archived'}</span>}
           </div>
           {error && <div className="alert bad no-print" role="alert">{error}</div>}
           {!final && <Note tone="warn">This is a draft preview. Figures may change until the month is finalized.</Note>}

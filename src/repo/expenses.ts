@@ -13,7 +13,7 @@ export interface NewExpense {
   /** Accounting month override (YYYY-MM); defaults to the expense date's month. */
   accountingMonth?: string;
 }
-export interface ExpenseRow extends ExpenseInput { propertyId: string; ownerId: string; periodId: string; paymentMethod: string | null; notes: string | null; reverses: string | null }
+export interface ExpenseRow extends ExpenseInput { receiptCount: number; propertyId: string; ownerId: string; periodId: string; paymentMethod: string | null; notes: string | null; reverses: string | null }
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 function validate(e: NewExpense) {
@@ -25,9 +25,9 @@ function validate(e: NewExpense) {
 
 const map = (x: any): ExpenseRow => ({ id: x.id, date: x.expense_date, vendor: x.vendor, description: x.description ?? '', category: x.category,
   amountCents: x.amount_cents, taxCents: x.tax_cents, ownerPaid: x.owner_paid, reimbursable: x.reimbursable, propertyId: x.property_id, ownerId: x.owner_id,
-  periodId: x.accounting_period_id, paymentMethod: x.payment_method, notes: x.notes, reverses: x.reverses_expense_id });
+  receiptCount: x.receipt_count ?? 0, periodId: x.accounting_period_id, paymentMethod: x.payment_method, notes: x.notes, reverses: x.reverses_expense_id });
 
-const SELECT = `SELECT e.*, c.name AS category FROM expenses e JOIN expense_categories c ON c.id = e.category_id`;
+const SELECT = `SELECT e.*, c.name AS category, (SELECT count(*)::int FROM expense_receipts r WHERE r.expense_id = e.id) AS receipt_count FROM expenses e JOIN expense_categories c ON c.id = e.category_id`;
 
 export async function createExpense(tx: Tx, orgId: string, userId: string, e: NewExpense): Promise<string> {
   validate(e);
@@ -77,13 +77,17 @@ export async function updateExpense(tx: Tx, orgId: string, userId: string, id: s
   await appendAudit(tx, orgId, { userId, action: 'EXPENSE_UPDATED', entityType: 'expense', entityId: id, oldValue: before, newValue: next });
 }
 
-export async function deleteExpense(tx: Tx, orgId: string, userId: string, id: string): Promise<void> {
+/** Returns the storage keys of the expense's receipts; the caller deletes those blobs after the transaction commits. */
+export async function deleteExpense(tx: Tx, orgId: string, userId: string, id: string): Promise<string[]> {
   const cur = (await tx.query(`${SELECT} WHERE e.id=$1 AND e.organization_id=$2 FOR UPDATE OF e`, [id, orgId])).rows[0];
   if (!cur) throw new UserError('Expense not found');
   const period = (await tx.query('SELECT id, year, month, status FROM accounting_periods WHERE id=$1 FOR UPDATE', [cur.accounting_period_id])).rows[0];
   assertEditable(period);
-  await tx.query('DELETE FROM expenses WHERE id=$1', [id]);
+  const blobs = (await tx.query('SELECT a.id, a.storage_key FROM expense_receipts r JOIN attachments a ON a.id=r.attachment_id WHERE r.expense_id=$1', [id])).rows;
+  await tx.query('DELETE FROM expenses WHERE id=$1', [id]); // cascades the receipt links
+  if (blobs.length) await tx.query('DELETE FROM attachments WHERE id = ANY($1::uuid[])', [blobs.map((b) => b.id)]);
   await appendAudit(tx, orgId, { userId, action: 'EXPENSE_DELETED', entityType: 'expense', entityId: id, oldValue: map(cur), newValue: null });
+  return blobs.map((b) => b.storage_key as string);
 }
 
 /** Correction path for a closed period: posts the negated expense into an OPEN accounting month. */

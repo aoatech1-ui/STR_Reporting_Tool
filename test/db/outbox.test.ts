@@ -12,7 +12,7 @@ import { loadStatements } from '../../src/repo/statements.ts';
 import { updateOwner } from '../../src/repo/owners.ts';
 import { verifyLink } from '../../src/delivery/links.ts';
 import { EmailError, type EmailProvider } from '../../src/email/types.ts';
-import { finalizedOrg, freshDb, seed, skip } from './helper.ts';
+import { finalizedOrg, freshDb, seed, skip, tmpStore } from './helper.ts';
 
 describe('outbox + worker', { skip }, () => {
   let pool: Pool, close: () => Promise<void>;
@@ -27,24 +27,26 @@ describe('outbox + worker', { skip }, () => {
     return { p, sent };
   };
   const handlers = (email: EmailProvider | null, whatsapp: any = null) =>
-    buildHandlers({ pool, email, whatsapp, linkSecret: 'link-secret', baseUrl: 'https://app.test', now: () => clock.t });
+    buildHandlers({ pool, files: tmpStore(), email, whatsapp, linkSecret: 'link-secret', baseUrl: 'https://app.test', now: () => clock.t });
   const drain = async (h: ReturnType<typeof handlers>, secs = 0) => { let n = 0; while (await runOnce(pool, h, { now, backoffSeconds: () => secs })) n++; return n; };
+  /** A finalized org whose statement-file job has already run, so tests below only see delivery jobs. */
+  const settled = async () => { const o = await finalizedOrg(pool); await drain(handlers(null)); return o; };
   const queue = (o: Awaited<ReturnType<typeof finalizedOrg>>, opts: any = {}) => queueStatementDelivery(pool, o.orgId, o.userId, o.statementId, { emailAvailable: true, whatsappAvailable: false, ...opts });
 
   test('queueing writes QUEUED rows + jobs atomically and sends nothing', async () => {
-    const o = await finalizedOrg(pool);
+    const o = await settled();
     const { sent, p } = mkEmail(() => {});
     const r = await queue(o);
     assert.equal(r.deliveryIds.length, 1);
     assert.deepEqual((await listDeliveries(pool, o.statementId)).map((d) => [d.channel, d.status]), [['EMAIL', 'QUEUED']]);
-    assert.equal((await pool.query(`SELECT count(*)::int AS n FROM jobs WHERE organization_id=$1 AND status='QUEUED'`, [o.orgId])).rows[0].n, 1);
+    assert.equal((await pool.query(`SELECT count(*)::int AS n FROM jobs WHERE organization_id=$1 AND type='send_delivery' AND status='QUEUED'`, [o.orgId])).rows[0].n, 1);
     assert.equal(sent.length, 0);
     await drain(handlers(p)); // leave nothing queued for the next test
     assert.equal(sent.length, 1);
   });
 
   test('double-click does not queue twice; worker sends once with a verifiable link and idempotency key', async () => {
-    const o = await finalizedOrg(pool);
+    const o = await settled();
     const { sent, p } = mkEmail(() => {});
     await queue(o);
     assert.equal((await queue(o)).deliveryIds.length, 0, 'QUEUED counts as live');
@@ -64,18 +66,18 @@ describe('outbox + worker', { skip }, () => {
   });
 
   test('re-running a job for an already-sent delivery never sends again (idempotent handler)', async () => {
-    const o = await finalizedOrg(pool);
+    const o = await settled();
     const { sent, p } = mkEmail(() => {});
     await queue(o);
     const h = handlers(p);
     await drain(h);
-    await pool.query(`UPDATE jobs SET status='QUEUED', run_at=now() WHERE organization_id=$1`, [o.orgId]); // simulate duplicate delivery of the job
+    await pool.query(`UPDATE jobs SET status='QUEUED', run_at=now() WHERE organization_id=$1 AND type='send_delivery'`, [o.orgId]); // simulate duplicate delivery of the job
     await drain(h);
     assert.equal(sent.length, 1);
   });
 
   test('transient provider failure: retried with backoff, then SENT; attempts and last error visible while retrying', async () => {
-    const o = await finalizedOrg(pool);
+    const o = await settled();
     const { sent, p } = mkEmail((n) => (n <= 2 ? new EmailError('HTTP 503', true, 503) : undefined));
     await queue(o);
     const h = handlers(p);
@@ -93,13 +95,13 @@ describe('outbox + worker', { skip }, () => {
   });
 
   test('permanent provider rejection fails immediately, is audited, and shows on the dashboard; resend can recover', async () => {
-    const o = await finalizedOrg(pool);
+    const o = await settled();
     const bad = mkEmail(() => new EmailError('HTTP 401 invalid api key', false, 401));
     await queue(o);
     assert.equal(await drain(handlers(bad.p)), 1);
     const [d] = await listDeliveries(pool, o.statementId);
     assert.deepEqual([d.status, d.error], ['FAILED', 'HTTP 401 invalid api key']);
-    assert.equal((await pool.query(`SELECT status, attempts FROM jobs WHERE organization_id=$1`, [o.orgId])).rows[0].status, 'FAILED');
+    assert.equal((await pool.query(`SELECT status, attempts FROM jobs WHERE organization_id=$1 AND type='send_delivery'`, [o.orgId])).rows[0].status, 'FAILED');
     assert.equal((await getDashboard(pool, o.orgId, 2026, 9)).failedDeliveries, 1);
     assert.ok((await listAudit(pool, o.orgId, { entityId: o.statementId })).some((a) => a.action === 'STATEMENT_SEND_FAILED'));
 
@@ -111,10 +113,10 @@ describe('outbox + worker', { skip }, () => {
   });
 
   test('exhausted retries give up as FAILED', async () => {
-    const o = await finalizedOrg(pool);
+    const o = await settled();
     const { p } = mkEmail(() => new EmailError('HTTP 500', true, 500));
     await queue(o);
-    await pool.query(`UPDATE jobs SET max_attempts=2 WHERE organization_id=$1`, [o.orgId]);
+    await pool.query(`UPDATE jobs SET max_attempts=2 WHERE organization_id=$1 AND type='send_delivery'`, [o.orgId]);
     const h = handlers(p);
     await drain(h, 0);
     await drain(h, 0);
@@ -122,7 +124,7 @@ describe('outbox + worker', { skip }, () => {
   });
 
   test('missing provider: refused at queue time (503), and a stale job fails permanently', async () => {
-    const o = await finalizedOrg(pool);
+    const o = await settled();
     await assert.rejects(() => queue(o, { emailAvailable: false }), (e: any) => e.status === 503 && /No email provider/.test(e.message));
     await queue(o);
     await drain(handlers(null));
@@ -130,7 +132,7 @@ describe('outbox + worker', { skip }, () => {
   });
 
   test('explicit resend creates a new delivery and is audited as a resend; webhooks advance status', async () => {
-    const o = await finalizedOrg(pool);
+    const o = await settled();
     const { sent, p } = mkEmail(() => {});
     await queue(o); await drain(handlers(p));
     assert.equal((await queue(o, { resend: true })).deliveryIds.length, 1);
@@ -143,7 +145,7 @@ describe('outbox + worker', { skip }, () => {
   });
 
   test('WhatsApp: only with opt-in + provider; message carries no amount', async () => {
-    const o = await finalizedOrg(pool);
+    const o = await settled();
     const email = mkEmail(() => {}); const wa: any[] = [];
     const waProv = { async sendTemplate(m: any) { wa.push(m); return { messageId: 'wa-1' }; } };
     assert.equal((await queue(o, { whatsappAvailable: true })).planned.length, 2);
@@ -151,7 +153,7 @@ describe('outbox + worker', { skip }, () => {
     assert.equal(wa.length, 1);
     assert.equal(wa[0].to, '+15550001111');
     assert.ok(!wa[0].params.some((x: string) => x.includes('$')));
-    const o2 = await finalizedOrg(pool);
+    const o2 = await settled();
     await withTx(pool, (tx) => updateOwner(tx, o2.orgId, o2.userId, o2.ownerId, { whatsappOptIn: false }));
     assert.deepEqual((await queue(o2, { whatsappAvailable: true })).planned.map((p) => p.channel), ['EMAIL']);
   });
@@ -166,7 +168,7 @@ describe('outbox + worker', { skip }, () => {
   });
 
   test('queueing is all-or-nothing: a failure after the delivery insert leaves no orphan rows', async () => {
-    const o = await finalizedOrg(pool);
+    const o = await settled();
     await pool.query(`CREATE OR REPLACE FUNCTION boom() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'boom'; END $$`);
     await pool.query(`CREATE TRIGGER jobs_boom BEFORE INSERT ON jobs FOR EACH ROW EXECUTE FUNCTION boom()`);
     try { await assert.rejects(() => queue(o), /boom/); } finally { await pool.query('DROP TRIGGER jobs_boom ON jobs'); }

@@ -1,6 +1,7 @@
 import { withTx, type Pool, type Tx } from '../db/pool.ts';
 import { selectRule } from '../accounting/commission.ts';
-import { evaluateStatement, type ExceptionItem } from '../accounting/exceptions.ts';
+import { evaluateStatement, RECEIPT_THRESHOLD_CENTS, type ExceptionItem } from '../accounting/exceptions.ts';
+import { enqueue } from '../worker/queue.ts';
 import { assertEditable } from '../accounting/period.ts';
 import { buildStatement, type Statement } from '../accounting/statement.ts';
 import { appendAudit } from '../repo/audit.ts';
@@ -11,6 +12,8 @@ import { getOrCreatePeriod, setPeriodStatus, type PeriodRow } from '../repo/peri
 import { listManagedProperties, listRules } from '../repo/properties.ts';
 import { deleteDraftStatements, finalizeStatements, insertDraftStatement } from '../repo/statements.ts';
 import { UserError } from '../errors.ts';
+
+export const STATEMENT_FILES_JOB = 'generate_statement_files';
 
 export interface DraftResult { statements: { id: string; statement: Statement }[]; exceptions: ExceptionItem[] }
 
@@ -34,7 +37,8 @@ async function generateInTx(tx: Tx, orgId: string, userId: string, period: Perio
     out.push({ id, statement });
     exceptions.push(...evaluateStatement(statement,
       { email: owner.email, emailEnabled: owner.emailEnabled, whatsappPhone: owner.whatsappPhone, whatsappEnabled: owner.whatsappEnabled, whatsappOptIn: owner.whatsappOptIn },
-      { unmatchedTransactions: 0, uncategorizedExpenses: 0, negativeExpenses: expenses.filter((e) => e.amountCents < 0).length }));
+      { unmatchedTransactions: 0, uncategorizedExpenses: 0, negativeExpenses: expenses.filter((e) => e.amountCents < 0).length,
+        missingReceipts: expenses.filter((e) => !e.reverses && e.amountCents + e.taxCents >= RECEIPT_THRESHOLD_CENTS && e.receiptCount === 0).length }));
   }
   const unmatched = await countUnmatched(tx, orgId, period.startDate, period.endDate);
   if (unmatched > 0) exceptions.push({ code: 'UNMATCHED_REVENUE', severity: 'CRITICAL', message: `${unmatched} Airbnb transaction(s) not matched to a property` });
@@ -67,6 +71,8 @@ export async function finalizePeriod(pool: Pool, orgId: string, userId: string, 
     period = await setPeriodStatus(tx, orgId, userId, period, 'FINALIZED', { criticalExceptions: critical, managerAcknowledged: opts.acknowledgeCritical });
     const finalized = await finalizeStatements(tx, orgId, period.id);
     for (const s of finalized) {
+      // PDF + CSV are rendered by the worker (never in the request) and archived against the statement.
+      await enqueue(tx, { orgId, type: STATEMENT_FILES_JOB, payload: { statementId: s.id }, dedupeKey: `files:${s.id}` });
       await appendAudit(tx, orgId, { userId, action: 'STATEMENT_FINALIZED', entityType: 'owner_statement', entityId: s.id, oldValue: null, newValue: { statementNumber: s.statementNumber } });
     }
     return { period, statementIds: finalized.map((s) => s.id), exceptions: res.exceptions };

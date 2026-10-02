@@ -1,4 +1,8 @@
 import { randomUUID } from 'node:crypto';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { LocalDiskStore } from '../../src/files/store.ts';
 import { createPool, withTx, type Pool } from '../../src/db/pool.ts';
 import { migrate } from '../../src/db/migrate.ts';
 import { createOrganization, createUser } from '../../src/repo/orgs.ts';
@@ -50,3 +54,6 @@ export async function finalizedOrg(pool: Pool) {
   const [st] = await loadStatements(pool, s.orgId, { statuses: ['FINALIZED'] });
   return { ...s, statementId: st.id };
 }
+
+/** A throwaway on-disk file store for tests. */
+export const tmpStore = () => new LocalDiskStore(mkdtempSync(join(tmpdir(), 'str-files-')));
