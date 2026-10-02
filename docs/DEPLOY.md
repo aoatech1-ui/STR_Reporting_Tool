@@ -61,6 +61,11 @@ For HTTP providers, point the provider's webhook at `https://<DOMAIN>/webhooks/e
 (Brevo, Mailjet, Postmark, SendGrid: append `?token=<value>` to the URL) or `EMAIL_WEBHOOK_SECRET` (Resend, MailerSend, Mailgun: the signing secret).
 Without it, deliveries stay at "Sent" and bounces are not recorded. Gmail/SMTP has no webhooks at all.
 
+### WhatsApp (optional)
+
+Follow `docs/whatsapp-setup.md`. The webhook to register is `https://<DOMAIN>/webhooks/whatsapp/meta` (or `/twilio`). It needs the provider's signing secret in `.env`,
+or delivery receipts and owners' STOP replies are rejected. `docker compose run --rm tools` checks the credentials.
+
 Send one real statement to yourself before inviting owners: `docker compose run --rm tools node src/cli/email-test.ts you@example.com`.
 
 ## 3. Backups

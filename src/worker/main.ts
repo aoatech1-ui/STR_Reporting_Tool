@@ -15,9 +15,9 @@ const stop = () => ac.abort();
 process.on('SIGTERM', stop); process.on('SIGINT', stop);
 
 for (const w of cfg.email?.warnings ?? []) console.warn(w);
-console.log(`worker started (email: ${cfg.email?.id ?? 'none'})`);
+console.log(`worker started (email: ${cfg.email?.id ?? 'none'}, whatsapp: ${cfg.whatsapp?.id ?? 'none'})`);
 const stopHeartbeat = startHeartbeat(pool, workerId);
-await runWorker(pool, buildHandlers({ pool, files: createFileStore(process.env), email: cfg.email?.provider ?? null, whatsapp: null, linkSecret: cfg.app.linkSecret, baseUrl: cfg.app.baseUrl }), ac.signal, { workerId });
+await runWorker(pool, buildHandlers({ pool, files: createFileStore(process.env), email: cfg.email?.provider ?? null, whatsapp: cfg.whatsapp?.provider ?? null, whatsappIncludeSummary: cfg.whatsapp?.includeSummary, linkSecret: cfg.app.linkSecret, baseUrl: cfg.app.baseUrl }), ac.signal, { workerId });
 await stopHeartbeat();
 await pool.end();
 console.log('worker stopped');

@@ -2,7 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api } from '../api';
 import { useSession } from '../auth';
-import { fmtMonth, ymOf } from '../format';
+import { fmtDateTime, fmtMonth, ymOf } from '../format';
 import { Badge, Card, Empty, Field, Kpi, Loaded, Modal, Money, Note, Page, StatusBadge, useAction, useLoad, useToast } from '../ui';
 
 const blank = { legalName: '', displayName: '', email: '', secondaryEmail: '', emailEnabled: true, phone: '', whatsappPhone: '', whatsappEnabled: false, whatsappOptIn: false, mailingAddress: '', taxReportingName: '', notes: '', active: true };
@@ -11,7 +11,8 @@ type OwnerValues = typeof blank;
 const clean = (v: OwnerValues) => Object.fromEntries(Object.entries(v).map(([k, x]) => [k, x === '' ? null : x]));
 
 export function OwnerForm({ initial, onSaved, onCancel, id }: { initial?: Partial<OwnerValues>; id?: string; onSaved: () => void; onCancel: () => void }) {
-  const [v, setV] = useState<OwnerValues>({ ...blank, ...Object.fromEntries(Object.entries(initial ?? {}).map(([k, x]) => [k, x ?? ''])) } as OwnerValues);
+  // Only the form's own fields: a loaded owner also carries id, tax status, timestamps... which the API (rightly) refuses in an update.
+  const [v, setV] = useState<OwnerValues>({ ...blank, ...Object.fromEntries(Object.keys(blank).filter((k) => initial && k in initial).map((k) => [k, (initial as any)[k] ?? ''])) } as OwnerValues);
   const { busy, error, run } = useAction();
   const set = <K extends keyof OwnerValues>(k: K, x: OwnerValues[K]) => setV((s) => ({ ...s, [k]: x }));
   const submit = async (e: FormEvent) => {
@@ -60,7 +61,7 @@ export function Owners() {
                   <td><Link to={`/owners/${o.id}`} onClick={(e) => e.stopPropagation()}><b>{o.displayName}</b></Link><div className="muted small">{o.legalName !== o.displayName ? o.legalName : ''}</div></td>
                   <td>{o.email ?? <span className="muted">—</span>}</td>
                   <td>{properties.filter((p) => p.ownerId === o.id).map((p) => p.name).join(', ') || <span className="muted">None</span>}</td>
-                  <td>{o.emailEnabled ? <Badge tone="info">Email</Badge> : null} {o.whatsappEnabled ? <Badge tone={o.whatsappOptIn ? 'good' : 'warn'}>{o.whatsappOptIn ? 'WhatsApp' : 'WhatsApp (no opt-in)'}</Badge> : null}</td>
+                  <td>{o.emailEnabled ? <Badge tone="info">Email</Badge> : null} {o.whatsappEnabled ? <Badge tone={o.whatsappOptIn ? 'good' : 'warn'}>{o.whatsappOptIn ? 'WhatsApp' : o.whatsappOptOutAt ? 'WhatsApp (opted out)' : 'WhatsApp (no opt-in)'}</Badge> : null}</td>
                   <td><StatusBadge status={o.active ? 'ACTIVE' : 'INACTIVE'} /></td>
                 </tr>))}</tbody>
             </table>)}
@@ -102,9 +103,10 @@ export function OwnerDetail() {
             <Card title="Delivery preferences">
               <dl className="dl">
                 <dt>Email</dt><dd>{owner.emailEnabled ? (owner.email ? <Badge tone="good">Enabled</Badge> : <Badge tone="warn">Enabled, no address</Badge>) : <Badge>Off</Badge>}</dd>
-                <dt>WhatsApp</dt><dd>{owner.whatsappEnabled ? <Badge tone={owner.whatsappOptIn ? 'good' : 'warn'}>{owner.whatsappOptIn ? 'Enabled, opted in' : 'Enabled, awaiting opt-in'}</Badge> : <Badge>Off</Badge>}</dd>
+                <dt>WhatsApp</dt><dd>{owner.whatsappEnabled ? <Badge tone={owner.whatsappOptIn ? 'good' : 'warn'}>{owner.whatsappOptIn ? 'Enabled, opted in' : owner.whatsappOptOutAt ? 'Opted out' : 'Enabled, awaiting opt-in'}</Badge> : <Badge>Off</Badge>}</dd>
                 <dt>WhatsApp number</dt><dd>{owner.whatsappPhone ?? '—'}</dd>
               </dl>
+              {owner.whatsappOptOutAt && <Note tone="warn">This owner replied <b>STOP</b> on {fmtDateTime(owner.whatsappOptOutAt)}. WhatsApp messages are switched off. Only tick “opted in” again if the owner asks you to resume.</Note>}
               <p className="muted small" style={{ marginBottom: 0 }}>WhatsApp messages never include dollar amounts unless enabled; the full statement is behind a secure link.</p>
             </Card>
           </div>

@@ -56,9 +56,9 @@ describe('operations: migrations guard, worker heartbeat, preflight', { skip }, 
     assert.equal((await pool.query(`SELECT count(*)::int AS n FROM worker_heartbeats WHERE worker_id='dead'`)).rows[0].n, 0, 'rows older than a day are cleaned up');
   });
 
-  test('settings endpoint reports the worker to administrators only', async () => {
+  test('settings endpoint reports worker health to administrators and managers, not viewers', async () => {
     const o = await seed(pool);
-    await addUser(pool, o.orgId, 'ADMIN', 'admin@ops.test'); await addUser(pool, o.orgId, 'VIEWER', 'viewer@ops.test');
+    await addUser(pool, o.orgId, 'ADMIN', 'admin@ops.test'); await addUser(pool, o.orgId, 'VIEWER', 'viewer@ops.test'); await addUser(pool, o.orgId, 'MANAGER', 'mgr@ops.test');
     const app: FastifyInstance = await buildApp({ pool, config: testConfig(), email: null, files: tmpStore() });
     try {
       const admin = await new Client(app).login('admin@ops.test'), viewer = await new Client(app).login('viewer@ops.test');
@@ -67,6 +67,7 @@ describe('operations: migrations guard, worker heartbeat, preflight', { skip }, 
       assert.equal((await admin.get('/api/settings/email')).json().worker.active, 1);
       await stop();
       assert.equal((await viewer.get('/api/settings/email')).statusCode, 403);
+      assert.equal((await (await new Client(app).login('mgr@ops.test')).get('/api/settings/email')).statusCode, 200, 'managers can see integration health');
     } finally { await app.close(); }
   });
 

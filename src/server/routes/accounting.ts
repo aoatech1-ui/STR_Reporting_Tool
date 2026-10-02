@@ -96,7 +96,7 @@ export async function accountingRoutes(app: FastifyInstance, c: Ctx) {
   app.post('/api/statements/:id/send', { preHandler: g('statements:send') }, async (req, reply) => {
     const a = auth(req); const { id } = Id.parse(req.params);
     const b = z.object({ resend: z.boolean().optional() }).strict().parse(req.body ?? {});
-    const r = await queueStatementDelivery(c.pool, a.orgId, a.id, id, { resend: b.resend, emailAvailable: !!c.email, whatsappAvailable: false });
+    const r = await queueStatementDelivery(c.pool, a.orgId, a.id, id, { resend: b.resend, emailAvailable: !!c.email, whatsappAvailable: !!c.whatsapp });
     return reply.code(202).send({ queued: r.planned, deliveryIds: r.deliveryIds });
   });
 

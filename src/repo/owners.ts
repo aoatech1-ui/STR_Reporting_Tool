@@ -9,7 +9,7 @@ export interface OwnerInput {
   notes?: string | null; active?: boolean;
 }
 export type TaxIdStatus = 'NOT_COLLECTED' | 'ON_FILE_EXTERNALLY' | 'REQUESTED';
-export interface Owner extends Required<Omit<OwnerInput, 'taxIdStatus'>> { id: string; taxIdStatus: TaxIdStatus }
+export interface Owner extends Required<Omit<OwnerInput, 'taxIdStatus'>> { id: string; taxIdStatus: TaxIdStatus; whatsappOptOutAt: string | null }
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PHONE = /^\+[1-9]\d{6,14}$/; // E.164
@@ -24,6 +24,7 @@ const map = (x: any): Owner => ({
   id: x.id, legalName: x.legal_name, displayName: x.display_name, email: x.email, secondaryEmail: x.secondary_email, emailEnabled: x.email_enabled,
   phone: x.phone, whatsappPhone: x.whatsapp_phone, whatsappEnabled: x.whatsapp_enabled, whatsappOptIn: x.whatsapp_opt_in,
   mailingAddress: x.mailing_address, taxReportingName: x.tax_reporting_name, taxIdStatus: x.tax_id_status, notes: x.notes, active: x.active,
+  whatsappOptOutAt: x.whatsapp_opt_out_at ? new Date(x.whatsapp_opt_out_at).toISOString() : null,
 });
 
 export async function getOwner(db: Db, orgId: string, id: string): Promise<Owner | null> {
@@ -57,10 +58,27 @@ export async function updateOwner(tx: Tx, orgId: string, userId: string, id: str
   await tx.query(
     `UPDATE owners SET legal_name=$3, display_name=$4, email=$5, secondary_email=$6, email_enabled=$7, phone=$8, whatsapp_phone=$9, whatsapp_enabled=$10,
        whatsapp_opt_in=$11, whatsapp_opt_in_at = CASE WHEN $16 THEN now() WHEN NOT $11 THEN NULL ELSE whatsapp_opt_in_at END,
+       whatsapp_opt_out_at = CASE WHEN $16 THEN NULL ELSE whatsapp_opt_out_at END,
        mailing_address=$12, tax_reporting_name=$13, tax_id_status=$14, notes=$15, active=$17, updated_at=now()
      WHERE id=$1 AND organization_id=$2`,
     [id, orgId, next.legalName, next.displayName, next.email, next.secondaryEmail, next.emailEnabled, next.phone, next.whatsappPhone, next.whatsappEnabled,
       next.whatsappOptIn, next.mailingAddress, next.taxReportingName, next.taxIdStatus, next.notes, optInChanged, next.active]);
   await appendAudit(tx, orgId, { userId, action: 'OWNER_UPDATED', entityType: 'owner', entityId: id, oldValue: before, newValue: next });
   return next;
+}
+
+/**
+ * An owner replied STOP. Clears opt-in for every owner (in any organization) whose WhatsApp number matches, records when,
+ * and audits it. Idempotent: owners already opted out are untouched. `digits` is the sender's number without "+".
+ */
+export async function optOutWhatsAppByPhone(tx: Tx, digits: string): Promise<{ orgId: string; ownerId: string }[]> {
+  if (!/^\d{7,15}$/.test(digits)) return [];
+  const r = await tx.query(
+    `UPDATE owners SET whatsapp_opt_in=false, whatsapp_opt_in_at=NULL, whatsapp_opt_out_at=now(), updated_at=now()
+     WHERE regexp_replace(whatsapp_phone, '\\D', '', 'g') = $1 AND whatsapp_opt_in RETURNING id, organization_id`, [digits]);
+  for (const x of r.rows) {
+    await appendAudit(tx, x.organization_id, { userId: null, action: 'WHATSAPP_OPT_OUT', entityType: 'owner', entityId: x.id,
+      oldValue: { whatsappOptIn: true }, newValue: { whatsappOptIn: false, via: 'owner replied STOP' } });
+  }
+  return r.rows.map((x) => ({ orgId: x.organization_id, ownerId: x.id }));
 }

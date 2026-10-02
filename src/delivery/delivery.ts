@@ -1,5 +1,6 @@
 import { formatMoney } from '../money.ts';
 import { UserError } from '../errors.ts';
+import type { WhatsAppTemplateKey } from '../whatsapp/types.ts';
 
 export type DeliveryStatus = 'QUEUED' | 'SENT' | 'DELIVERED' | 'BOUNCED' | 'FAILED';
 export type Channel = 'EMAIL' | 'WHATSAPP';
@@ -8,7 +9,7 @@ export interface DeliveryRecord {
   statementId: string; channel: Channel; recipient: string; status: DeliveryStatus;
   providerMessageId: string | null; sentAt: string | null; templateId?: string; error?: string; resend: boolean;
 }
-export interface WhatsAppProvider { sendTemplate(m: { to: string; template: string; params: string[] }): Promise<{ messageId: string }> }
+export type { WhatsAppProvider } from '../whatsapp/types.ts';
 
 export interface DeliveryTarget {
   statementId: string; statementStatus: 'DRAFT' | 'REVIEW' | 'FINALIZED' | 'LOCKED';
@@ -46,9 +47,12 @@ export function composeEmail(t: Pick<DeliveryTarget, 'monthLabel' | 'propertyNam
   return { subject, text, html };
 }
 
-/** WhatsApp carries no dollar amounts unless the manager opts in; the full statement is behind the signed link. */
-export function composeWhatsApp(t: Pick<DeliveryTarget, 'monthLabel' | 'propertyName' | 'ownerProceedsCents'>, url: string, includeSummary = false) {
-  return { template: 'statement_ready', params: [t.monthLabel, t.propertyName, ...(includeSummary ? [formatMoney(t.ownerProceedsCents)] : []), url] };
+/**
+ * WhatsApp carries no dollar amounts unless the manager opts in; the full statement is behind the signed link.
+ * The two variants are two separate approved templates (their variable counts differ): statement_ready / statement_ready_summary.
+ */
+export function composeWhatsApp(t: Pick<DeliveryTarget, 'monthLabel' | 'propertyName' | 'ownerProceedsCents'>, url: string, includeSummary = false): { template: WhatsAppTemplateKey; params: string[] } {
+  return { template: includeSummary ? 'statement_ready_summary' : 'statement_ready', params: [t.monthLabel, t.propertyName, ...(includeSummary ? [formatMoney(t.ownerProceedsCents)] : []), url] };
 }
 
 export const LINK_TTL_MS = 7 * 24 * 3600 * 1000;

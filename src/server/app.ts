@@ -8,6 +8,7 @@ import { ZodError } from 'zod';
 import type { Pool } from '../db/pool.ts';
 import { LocalDiskStore, type FileStore } from '../files/store.ts';
 import type { EmailSetup } from '../email/factory.ts';
+import type { WhatsAppSetup } from '../whatsapp/factory.ts';
 import { UserError } from '../errors.ts';
 import type { AppConfig } from './config.ts';
 import { makeGuard } from './guard.ts';
@@ -16,13 +17,13 @@ import { authRoutes } from './routes/auth.ts';
 import { coreRoutes } from './routes/core.ts';
 import { publicRoutes } from './routes/public.ts';
 
-export interface AppDeps { pool: Pool; config: AppConfig; email: EmailSetup | null; now?: () => Date; logger?: boolean | { level: string }; /** Receipts and generated statement files (default: ./data/files on local disk). */ files?: FileStore; /** Built UI directory (default: web/dist). The API runs without it. */ webDir?: string }
+export interface AppDeps { pool: Pool; config: AppConfig; email: EmailSetup | null; whatsapp?: WhatsAppSetup | null; now?: () => Date; logger?: boolean | { level: string }; /** Receipts and generated statement files (default: ./data/files on local disk). */ files?: FileStore; /** Built UI directory (default: web/dist). The API runs without it. */ webDir?: string }
 const DEFAULT_WEB_DIR = fileURLToPath(new URL('../../web/dist', import.meta.url));
 const API_PREFIXES = ['/api/', '/s/', '/webhooks/', '/healthz'];
 const STRICT_CSP = "default-src 'none'; frame-ancestors 'none'";
 // The UI is a same-origin SPA: scripts only from self (no inline/eval). Inline styles are allowed for React style props.
 const UI_CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
-export type Ctx = { pool: Pool; config: AppConfig; email: EmailSetup | null; files: FileStore; now: () => Date; guard: ReturnType<typeof makeGuard> };
+export type Ctx = { pool: Pool; config: AppConfig; email: EmailSetup | null; whatsapp: WhatsAppSetup | null; files: FileStore; now: () => Date; guard: ReturnType<typeof makeGuard> };
 
 const PG_STATUS: Record<string, [number, string]> = {
   '23505': [409, 'A record with these details already exists'], '23503': [409, 'This record is referenced by, or references, another record'],
@@ -34,7 +35,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   const now = deps.now ?? (() => new Date());
   const app = Fastify({ logger: deps.logger ? { ...(typeof deps.logger === 'object' ? deps.logger : {}), redact: ['req.headers.cookie', 'req.headers.authorization', 'req.headers["x-csrf-token"]'] } : false,
     trustProxy: deps.config.trustProxy, bodyLimit: 12 * 1024 * 1024 });
-  const ctx: Ctx = { pool: deps.pool, config: deps.config, email: deps.email, files: deps.files ?? new LocalDiskStore(process.env.FILE_STORE_DIR || './data/files'), now, guard: makeGuard({ pool: deps.pool, config: deps.config, now }) };
+  const ctx: Ctx = { pool: deps.pool, config: deps.config, email: deps.email, whatsapp: deps.whatsapp ?? null, files: deps.files ?? new LocalDiskStore(process.env.FILE_STORE_DIR || './data/files'), now, guard: makeGuard({ pool: deps.pool, config: deps.config, now }) };
 
   await app.register(cookie);
   // Receipt uploads arrive as the raw file body. Type is verified from the bytes later; this only lets the body through to the route.

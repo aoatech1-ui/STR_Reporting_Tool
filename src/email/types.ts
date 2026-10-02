@@ -17,7 +17,7 @@ export class EmailError extends Error {
   constructor(message: string, retryable: boolean, status?: number) { super(message); this.name = 'EmailError'; this.retryable = retryable; this.status = status; }
 }
 
-export type FetchLike = (url: string, init: { method: string; headers: Record<string, string>; body: string; signal?: AbortSignal }) => Promise<{ status: number; ok: boolean; headers: { get(n: string): string | null }; text(): Promise<string> }>;
+export type FetchLike = (url: string, init: { method: string; headers: Record<string, string>; body?: string; signal?: AbortSignal }) => Promise<{ status: number; ok: boolean; headers: { get(n: string): string | null }; text(): Promise<string> }>;
 
 export interface Sender { email: string; name?: string }
 
@@ -31,3 +31,6 @@ export const formatSender = (s: Sender) => (s.name ? `${s.name.replace(/[<>"\r\n
 
 /** Strips tags/newline injection from header-ish values. */
 export const cleanHeader = (v: string) => v.replace(/[\r\n]+/g, ' ').trim();
+
+/** The same error type is used by every outbound channel (email, WhatsApp). */
+export { EmailError as SendError };

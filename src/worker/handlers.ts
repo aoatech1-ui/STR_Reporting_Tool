@@ -37,6 +37,7 @@ export function deliveryHandler(d: DeliveryDeps): Handler {
     const url = `${d.baseUrl}/view/${signLink(st.id, d.linkSecret, now() + LINK_TTL_MS)}`;
 
     let providerId: string;
+    let templateUsed: string | null = null;
     if (del.channel === 'EMAIL') {
       if (!d.email) throw new EmailError('Email provider is not configured', false);
       const m = composeEmail(target, url);
@@ -45,9 +46,10 @@ export function deliveryHandler(d: DeliveryDeps): Handler {
       if (!d.whatsapp) throw new EmailError('WhatsApp provider is not configured', false);
       const m = composeWhatsApp(target, url, d.whatsappIncludeSummary);
       providerId = (await d.whatsapp.sendTemplate({ to: del.recipient, template: m.template, params: m.params })).messageId;
+      templateUsed = m.template;
     }
     await withTx(d.pool, async (tx) => {
-      await tx.query(`UPDATE statement_deliveries SET status='SENT', provider_message_id=$2, sent_at=$3, attempts=$4, failure_reason=NULL WHERE id=$1`, [del.id, providerId, new Date(now()), job.attempts]);
+      await tx.query(`UPDATE statement_deliveries SET status='SENT', provider_message_id=$2, sent_at=$3, attempts=$4, failure_reason=NULL, template_id=COALESCE($5, template_id) WHERE id=$1`, [del.id, providerId, new Date(now()), job.attempts, templateUsed]);
       await appendAudit(tx, del.organization_id, { userId: del.requested_by, action: del.resend ? 'STATEMENT_RESENT' : 'STATEMENT_SENT', entityType: 'owner_statement', entityId: del.statement_id,
         oldValue: null, newValue: { channel: del.channel, status: 'SENT', recipient: del.recipient, deliveryId: del.id }, at: new Date(now()).toISOString() });
     });

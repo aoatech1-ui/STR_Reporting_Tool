@@ -68,7 +68,9 @@ export async function authRoutes(app: FastifyInstance, c: Ctx) {
     return { ok: true };
   });
 
-  app.get("/api/settings/email", { preHandler: c.guard("users:manage") }, async (req) => ({
+  app.get("/api/settings/email", { preHandler: c.guard("settings:view") }, async (req) => ({
     configured: !!c.email, provider: c.email?.id ?? null, warnings: c.email?.warnings ?? [], jobs: await getJobStats(c.pool, auth(req).orgId), worker: await getWorkerStatus(c.pool), webhooksConfigured: !!(c.config.webhook.token || c.config.webhook.signingSecret), storage: c.files.kind,
+    whatsapp: c.whatsapp ? { configured: true, provider: c.whatsapp.id, templates: c.whatsapp.templates, includeSummary: c.whatsapp.includeSummary, warnings: c.whatsapp.warnings,
+      webhooksConfigured: c.whatsapp.id === 'meta' ? !!(c.whatsapp.webhook.metaAppSecret && c.whatsapp.webhook.metaVerifyToken) : !!c.whatsapp.webhook.twilioAuthToken } : { configured: false },
   }));
 }

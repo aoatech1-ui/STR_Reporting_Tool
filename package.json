@@ -17,7 +17,8 @@
     "dev:web": "vite web",
     "test:e2e": "bash scripts/test-db.sh test/e2e/ui.test.ts",
     "preflight": "node src/cli/preflight.ts",
-    "verify-data": "node src/cli/verify-data.ts"
+    "verify-data": "node src/cli/verify-data.ts",
+    "whatsapp:test": "node src/cli/whatsapp-test.ts"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

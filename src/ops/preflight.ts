@@ -94,6 +94,19 @@ export async function runPreflight(env: Record<string, string | undefined>, pool
     }
   }
 
+  if (cfg) {
+    const wa = cfg.whatsapp;
+    if (!wa) add('whatsapp', 'warn', 'WHATSAPP_PROVIDER not set: owners cannot receive WhatsApp notifications (email still works)');
+    else {
+      await guard('whatsapp', async () => {
+        if (wa.provider.verify) { await wa.provider.verify(); add('whatsapp', 'pass', `${wa.id}: credentials OK`); }
+        else add('whatsapp', 'pass', `${wa.id} configured`);
+      });
+      for (const w of wa.warnings) add('whatsapp', 'warn', w);
+      add('whatsapp templates', 'warn', `templates must be APPROVED by WhatsApp before they can be sent: ${Object.values(wa.templates).filter(Boolean).join(', ')} (see docs/whatsapp-setup.md)`);
+    }
+  }
+
   await guard('worker', async () => {
     const w = await getWorkerStatus(pool);
     add('worker', w.active > 0 ? 'pass' : 'warn', w.active > 0 ? `${w.active} worker(s) alive (last seen ${w.lastSeenSecondsAgo}s ago)` : 'no worker heartbeat: emails will not be sent and PDFs not archived until "npm run worker" is running');

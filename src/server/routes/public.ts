@@ -5,6 +5,8 @@ import { STATEMENT_DISCLAIMER } from '../../accounting/statement.ts';
 import { verifyLink } from '../../delivery/links.ts';
 import { parseEmailWebhook, WebhookAuthError } from '../../email/webhooks.ts';
 import { appendAudit } from '../../repo/audit.ts';
+import { optOutWhatsAppByPhone } from '../../repo/owners.ts';
+import { isOptOut, metaChallenge, parseMetaWebhook, parseTwilioWebhook, type WhatsAppWebhook } from '../../whatsapp/webhooks.ts';
 import { applyDeliveryWebhook } from '../../repo/deliveries.ts';
 import { loadStatementDoc, statementPdf } from '../../services/documents.ts';
 import { getOrganization } from '../../repo/orgs.ts';
@@ -51,7 +53,34 @@ export async function publicRoutes(app: FastifyInstance, c: Ctx) {
 
   // Provider delivery-status callbacks. Raw body is needed for signature verification, so this scope parses JSON as a string.
   await app.register(async (w) => {
-    w.addContentTypeParser(['application/json', 'application/*+json', 'text/plain'], { parseAs: 'string' }, (_req, body, done) => done(null, body));
+    w.addContentTypeParser(['application/json', 'application/*+json', 'text/plain', 'application/x-www-form-urlencoded'], { parseAs: 'string' }, (_req, body, done) => done(null, body));
+    // ---- WhatsApp ----
+    // Meta registers a webhook with a one-time GET handshake.
+    w.get('/webhooks/whatsapp/meta', async (req, reply) => {
+      const wa = c.whatsapp;
+      const challenge = wa?.id === 'meta' ? metaChallenge(req.query as Record<string, string>, wa.webhook.metaVerifyToken) : null;
+      return challenge === null ? reply.code(403).send({ error: 'Forbidden' }) : reply.header('content-type', 'text/plain').send(challenge);
+    });
+    // Delivery receipts (sent/delivered/read/failed) and inbound replies. Authenticated by signature; fail closed.
+    w.post('/webhooks/whatsapp/:provider', { config: { rateLimit: { max: 600, timeWindow: '1 minute' } } }, async (req, reply) => {
+      const provider = (req.params as { provider: string }).provider;
+      const wa = c.whatsapp;
+      if (!wa || wa.id !== provider) return reply.code(404).send({ error: 'Not found' });
+      const raw = String(req.body ?? '');
+      let parsed: WhatsAppWebhook;
+      try {
+        parsed = provider === 'meta' ? parseMetaWebhook(raw, req.headers, wa.webhook.metaAppSecret)
+          : parseTwilioWebhook(`${c.config.baseUrl}${req.url}`, raw, req.headers, wa.webhook.twilioAuthToken);
+      } catch (e) {
+        if (e instanceof WebhookAuthError) return reply.code(401).send({ error: 'Unauthorized' });
+        throw e;
+      }
+      let applied = 0, optedOut = 0;
+      for (const ev of parsed.statuses) if (await withTx(c.pool, (tx) => applyDeliveryWebhook(tx, ev.messageId, ev.status, ev.reason))) applied++;
+      for (const m of parsed.inbound) if (isOptOut(m.text)) optedOut += (await withTx(c.pool, (tx) => optOutWhatsAppByPhone(tx, m.from))).length;
+      return { received: parsed.statuses.length + parsed.inbound.length, applied, optedOut };
+    });
+
     w.post('/webhooks/email/:provider', { config: { rateLimit: { max: 600, timeWindow: '1 minute' } } }, async (req, reply) => {
       const provider = (req.params as { provider: string }).provider;
       if (!c.email || c.email.id !== provider) return reply.code(404).send({ error: 'Not found' });

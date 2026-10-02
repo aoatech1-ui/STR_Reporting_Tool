@@ -1,5 +1,6 @@
 import { after, before, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHmac } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync, statSync } from 'node:fs';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
@@ -10,6 +11,8 @@ import { createOrganization, createUser } from '../../src/repo/orgs.ts';
 import { buildHandlers } from '../../src/worker/handlers.ts';
 import { runOnce } from '../../src/worker/queue.ts';
 import type { EmailProvider } from '../../src/email/types.ts';
+import { createWhatsAppProvider } from '../../src/whatsapp/factory.ts';
+import type { WhatsAppMessage, WhatsAppProvider } from '../../src/whatsapp/types.ts';
 import { CSV, freshDb, skip, tmpStore } from '../db/helper.ts';
 
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
@@ -25,6 +28,9 @@ describe('browser: manager UI end to end', { skip: E2E_SKIP, timeout: 180_000 },
   const files = tmpStore();
   const sent: any[] = [];
   const emailProvider: EmailProvider = { name: 'fake', async send(m) { sent.push(m); return { messageId: `em-${sent.length}` }; } };
+  const sentWa: WhatsAppMessage[] = [];
+  const waProvider: WhatsAppProvider = { name: 'fake', async sendTemplate(m) { sentWa.push(m); return { messageId: `wamid.e2e${sentWa.length}` }; } };
+  const WA_ENV = { WHATSAPP_PROVIDER: 'meta', WHATSAPP_META_TOKEN: 't', WHATSAPP_META_PHONE_NUMBER_ID: '1', WHATSAPP_META_APP_SECRET: 'e2e-app-secret', WHATSAPP_VERIFY_TOKEN: 'vt' };
   const problems: string[] = [];
 
   before(async () => {
@@ -38,7 +44,7 @@ describe('browser: manager UI end to end', { skip: E2E_SKIP, timeout: 180_000 },
     const port = 20000 + Math.floor(Math.random() * 20000);
     base = `http://127.0.0.1:${port}`;
     app = await buildApp({ pool, config: { baseUrl: base, linkSecret: 'x'.repeat(40), cookieSecure: false, trustProxy: false, allowedOrigins: [base], loginRateLimit: 1000, webhook: {}, scryptCost: COST },
-      email: { id: 'fake', provider: emailProvider, warnings: [] }, files });
+      email: { id: 'fake', provider: emailProvider, warnings: [] }, whatsapp: { ...createWhatsAppProvider(WA_ENV)!, provider: waProvider }, files });
     await app.listen({ port, host: '127.0.0.1' });
     browser = await chromium.launch({ executablePath: CHROME, args: ['--no-sandbox'] });
     ctx = await browser.newContext({ viewport: { width: 1360, height: 900 } });
@@ -194,7 +200,7 @@ describe('browser: manager UI end to end', { skip: E2E_SKIP, timeout: 180_000 },
   test('send → worker → status; owner opens the secure link without logging in', async () => {
     await page.getByRole('button', { name: 'Send to owner' }).click();
     await page.getByText(/Queued for delivery/).waitFor();
-    const h = buildHandlers({ pool, files, email: emailProvider, whatsapp: null, linkSecret: 'x'.repeat(40), baseUrl: base });
+    const h = buildHandlers({ pool, files, email: emailProvider, whatsapp: waProvider, linkSecret: 'x'.repeat(40), baseUrl: base });
     while (await runOnce(pool, h)) { /* drain */ }
     assert.equal(sent.length, 1);
     await page.reload();
@@ -218,9 +224,51 @@ describe('browser: manager UI end to end', { skip: E2E_SKIP, timeout: 180_000 },
     await anon.close();
   });
 
+  test('WhatsApp: enable it on the owner in the UI, send, see it in Communications, owner replies STOP and the UI reflects it', async () => {
+    // enabling via the owner edit form (also covers the form submitting only its own fields)
+    await page.goto(`${base}/owners`);
+    await page.getByRole('link', { name: 'John Smith' }).first().click();
+    await page.getByRole('button', { name: 'Edit owner' }).click();
+    await page.getByLabel('WhatsApp number').fill('+15551230000');
+    await page.getByLabel('WhatsApp notifications').check();
+    await page.getByLabel('Owner has opted in to WhatsApp').check();
+    await page.getByRole('button', { name: 'Save owner' }).click();
+    await page.getByText('Owner updated').waitFor();
+    await page.getByText('Enabled, opted in').waitFor();
+
+    // resend the September statement: email AND WhatsApp are queued
+    await page.goto(`${base}/statements`);
+    await page.getByRole('link', { name: /^STM-/ }).click();
+    await page.getByRole('button', { name: 'Resend to owner' }).click();
+    await page.getByText(/Queued for delivery/).waitFor();
+    const h = buildHandlers({ pool, files, email: emailProvider, whatsapp: waProvider, linkSecret: 'x'.repeat(40), baseUrl: base });
+    while (await runOnce(pool, h)) { /* drain */ }
+    assert.equal(sentWa.length, 1);
+    assert.deepEqual([sentWa[0].to, sentWa[0].template], ['+15551230000', 'statement_ready']);
+    assert.ok(!sentWa[0].params.some((p) => p.includes('$')), 'no dollar amount in the WhatsApp message');
+    await page.goto(`${base}/communications`);
+    await page.getByRole('cell', { name: '+15551230000' }).waitFor();
+    await shot('10b-communications-whatsapp');
+
+    // the owner replies STOP (signed Meta webhook)
+    const raw = JSON.stringify({ object: 'whatsapp_business_account', entry: [{ id: '1', changes: [{ field: 'messages', value: { messaging_product: 'whatsapp', messages: [{ from: '15551230000', id: 'wamid.in1', type: 'text', text: { body: 'STOP' } }] } }] }] });
+    const res = await fetch(`${base}/webhooks/whatsapp/meta`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-hub-signature-256': `sha256=${createHmac('sha256', 'e2e-app-secret').update(raw).digest('hex')}` }, body: raw });
+    assert.deepEqual(await res.json(), { received: 1, applied: 0, optedOut: 1 });
+    await page.goto(`${base}/owners`);
+    await page.getByRole('link', { name: 'John Smith' }).first().click();
+    await page.getByText('Opted out', { exact: true }).waitFor();
+    await page.getByText(/replied STOP on/).waitFor();
+    await shot('10c-owner-opted-out');
+    // the statement can no longer go to WhatsApp, only email
+    await page.goto(`${base}/integrations`);
+    await page.getByText('Meta Cloud API').waitFor();
+    await page.getByText('statement_ready', { exact: true }).waitFor();
+    await shot('10d-integrations-whatsapp');
+  });
+
   test('communications, annual report, dashboard, audit log', async () => {
     await page.goto(`${base}/communications`);
-    await page.getByRole('cell', { name: 'john@example.com' }).waitFor();
+    await page.getByRole('cell', { name: 'john@example.com' }).first().waitFor();
     await shot('10-communications');
     await page.goto(`${base}/annual?year=2026`);
     await page.getByLabel('Owner').selectOption({ label: 'John Smith' });

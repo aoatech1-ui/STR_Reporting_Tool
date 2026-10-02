@@ -10,7 +10,7 @@ type Call = { url: string; method: string; headers: Record<string, string>; body
 function fake(status: number, body: unknown = {}, headers: Record<string, string> = {}) {
   const calls: Call[] = [];
   const f: FetchLike = async (url, init) => {
-    calls.push({ url, method: init.method, headers: init.headers, body: init.body });
+    calls.push({ url, method: init.method, headers: init.headers, body: init.body ?? '' });
     return { status, ok: status >= 200 && status < 300, headers: { get: (n) => headers[n.toLowerCase()] ?? null }, text: async () => (typeof body === 'string' ? body : JSON.stringify(body)) };
   };
   return { f, calls };

@@ -176,6 +176,18 @@ Safety behaviors: the server refuses to start if database migrations are pending
 (the classic "emails queued but nothing sending" failure); `/healthz` returns 503 if the database is unreachable. A full disaster recovery (destroy everything, restore
 from an encrypted backup) was rehearsed with these exact files; see the "What was verified" section of the runbook for what was and was not tested.
 
+## WhatsApp (added)
+
+Owners with WhatsApp enabled **and** opted in also receive a short template message with the secure statement link when you send a statement.
+Providers: **Meta WhatsApp Cloud API** and **Twilio** (`src/whatsapp/`). Setup, template text to create, webhooks and troubleshooting: **[docs/whatsapp-setup.md](docs/whatsapp-setup.md)**.
+Check a setup with `npm run whatsapp:test -- --verify-only` (and `-- +15551234567` to send one).
+
+* Consent is enforced: nothing is sent without the owner's opt-in. An owner replying **STOP** is opted out immediately (recorded, audited); only a manager can re-enable it.
+* No dollar amounts in the message by default; `WHATSAPP_INCLUDE_SUMMARY=true` switches to the second template that includes the owner proceeds.
+* Signed webhooks (`/webhooks/whatsapp/meta|twilio`) update delivery status (Sent → Delivered/Failed) and process STOP; they fail closed without the provider's signing secret.
+* Errors are classified by provider code (rate limits retried; bad token, unapproved template, number not on WhatsApp fail at once with a plain-language reason).
+* Verified with mocked HTTP, locally generated signatures and a browser test; **not yet exercised against live Meta/Twilio accounts** (see the guide).
+
 ## Design decisions
 
 - **Not dependent on Airbnb API.** Airbnb's API is gated by program/scope approval and its terms restrict retaining and analysing

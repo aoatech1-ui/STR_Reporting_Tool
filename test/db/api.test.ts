@@ -111,7 +111,7 @@ describe('HTTP API', { skip }, () => {
       ['POST', '/api/periods/2026-01/generate', {}, 'period:review'], ['POST', '/api/periods/2026-01/finalize', {}, 'period:finalize'],
       ['POST', '/api/statements/00000000-0000-4000-8000-000000000000/send', {}, 'statements:send'], ['GET', '/api/audit', undefined, 'audit:read'],
       ['GET', '/api/users', undefined, 'users:manage'], ['POST', '/api/properties', {}, 'properties:write'],
-      ['POST', '/api/properties/00000000-0000-4000-8000-000000000000/commission-rules', {}, 'commission:write'], ['GET', '/api/settings/email', undefined, 'users:manage'],
+      ['POST', '/api/properties/00000000-0000-4000-8000-000000000000/commission-rules', {}, 'commission:write'], ['GET', '/api/settings/email', undefined, 'settings:view'],
     ];
     for (const role of ['ADMIN', 'MANAGER', 'ACCOUNTANT', 'VIEWER'] as Role[]) {
       const c = await as(`${role.toLowerCase()}-a@example.com`);

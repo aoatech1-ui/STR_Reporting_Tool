@@ -1,4 +1,5 @@
 import { createEmailProvider, type EmailSetup } from '../email/factory.ts';
+import { createWhatsAppProvider, type WhatsAppSetup } from '../whatsapp/factory.ts';
 import type { ScryptCost } from '../auth/password.ts';
 
 export interface AppConfig {
@@ -7,7 +8,7 @@ export interface AppConfig {
 }
 export interface Env { [k: string]: string | undefined }
 
-export function loadConfig(env: Env): { databaseUrl: string; port: number; host: string; app: AppConfig; email: EmailSetup | null } {
+export function loadConfig(env: Env): { databaseUrl: string; port: number; host: string; app: AppConfig; email: EmailSetup | null; whatsapp: WhatsAppSetup | null } {
   const need = (k: string) => { const v = env[k]?.trim(); if (!v) throw new Error(`${k} is required`); return v; };
   const baseUrl = need('BASE_URL').replace(/\/+$/, '');
   const url = new URL(baseUrl);
@@ -24,5 +25,6 @@ export function loadConfig(env: Env): { databaseUrl: string; port: number; host:
       webhook: { token: env.EMAIL_WEBHOOK_TOKEN, signingSecret: env.EMAIL_WEBHOOK_SECRET },
     },
     email: createEmailProvider(env),
+    whatsapp: createWhatsAppProvider(env, baseUrl),
   };
 }
