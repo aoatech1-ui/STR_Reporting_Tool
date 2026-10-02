@@ -15,7 +15,8 @@ const sha = (s: string) => createHash('sha256').update(s).digest('hex');
 const token = () => randomBytes(32).toString('base64url');
 
 export interface AuthUser { id: string; orgId: string; name: string; email: string; role: Role }
-export interface SessionInfo extends AuthUser { sessionId: string; csrf: string }
+export interface SessionInfo extends AuthUser { sessionId: string; csrf: string; mfaEnabled: boolean; mfaEnrollmentRequired: boolean }
+export interface AuthResult { user: AuthUser; mfaRequired: boolean }
 
 let dummyHash: Promise<string> | undefined; // equalises timing for unknown emails
 const getDummy = (cost: ScryptCost) => (dummyHash ??= hashPassword('not-a-real-password', cost));
@@ -24,8 +25,8 @@ const getDummy = (cost: ScryptCost) => (dummyHash ??= hashPassword('not-a-real-p
  * Verifies credentials with lockout. Failure counters are committed before an error is thrown.
  * The same generic error is returned for unknown user, wrong password and inactive user.
  */
-export async function authenticate(pool: Pool, email: string, password: string, now: Date, cost: ScryptCost = DEFAULT_COST): Promise<AuthUser> {
-  type Outcome = { user: AuthUser } | { error: UserError };
+export async function authenticate(pool: Pool, email: string, password: string, now: Date, cost: ScryptCost = DEFAULT_COST): Promise<AuthResult> {
+  type Outcome = AuthResult | { error: UserError };
   const out: Outcome = await withTx(pool, async (tx): Promise<Outcome> => {
     const r = await tx.query('SELECT * FROM users WHERE email = $1 FOR UPDATE', [email.trim().toLowerCase()]);
     const u = r.rows[0];
@@ -42,11 +43,15 @@ export async function authenticate(pool: Pool, email: string, password: string, 
       await appendAudit(tx, u.organization_id, { userId: u.id, action: lock ? 'ACCOUNT_LOCKED' : 'LOGIN_FAILED', entityType: 'user', entityId: u.id, oldValue: null, newValue: { failedLogins: fails }, at: now.toISOString() });
       return bad;
     }
+    const user = { id: u.id, orgId: u.organization_id, name: u.name, email: u.email, role: u.role };
+    // With MFA the failure counter is only reset after the second factor succeeds; otherwise someone who knows the password could
+    // reset it by logging in again and so guess codes forever.
+    if (u.totp_enabled_at) return { user, mfaRequired: true };
     await tx.query('UPDATE users SET failed_logins=0, locked_until=NULL WHERE id=$1', [u.id]);
-    return { user: { id: u.id, orgId: u.organization_id, name: u.name, email: u.email, role: u.role } };
+    return { user, mfaRequired: false };
   });
   if ('error' in out) throw out.error;
-  return out.user;
+  return out;
 }
 
 export async function createSession(tx: Tx, user: AuthUser, now: Date, meta: { ip?: string; userAgent?: string } = {}) {
@@ -61,8 +66,8 @@ export async function createSession(tx: Tx, user: AuthUser, now: Date, meta: { i
 /** Role/active are read fresh on every request, so deactivation or demotion takes effect immediately. */
 export async function getSession(db: Db, rawToken: string, now: Date): Promise<SessionInfo | null> {
   const r = await db.query(
-    `SELECT s.id AS sid, s.csrf_token, s.last_seen_at, s.expires_at, u.id, u.organization_id, u.name, u.email, u.role, u.active
-     FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = $1`, [sha(rawToken)]);
+    `SELECT s.id AS sid, s.csrf_token, s.last_seen_at, s.expires_at, u.id, u.organization_id, u.name, u.email, u.role, u.active, (u.totp_enabled_at IS NOT NULL) AS mfa_enabled, o.require_mfa
+     FROM sessions s JOIN users u ON u.id = s.user_id JOIN organizations o ON o.id = u.organization_id WHERE s.token_hash = $1`, [sha(rawToken)]);
   const x = r.rows[0];
   if (!x || !x.active) return null;
   if (new Date(x.expires_at) <= now || now.getTime() - new Date(x.last_seen_at).getTime() > SESSION_IDLE_MS) {
@@ -70,7 +75,8 @@ export async function getSession(db: Db, rawToken: string, now: Date): Promise<S
     return null;
   }
   if (now.getTime() - new Date(x.last_seen_at).getTime() > 60_000) await db.query('UPDATE sessions SET last_seen_at=$2 WHERE id=$1', [x.sid, now]);
-  return { sessionId: x.sid, csrf: x.csrf_token, id: x.id, orgId: x.organization_id, name: x.name, email: x.email, role: x.role };
+  return { sessionId: x.sid, csrf: x.csrf_token, id: x.id, orgId: x.organization_id, name: x.name, email: x.email, role: x.role,
+    mfaEnabled: x.mfa_enabled, mfaEnrollmentRequired: x.require_mfa && !x.mfa_enabled };
 }
 
 export async function deleteSession(db: Db, rawToken: string): Promise<void> { await db.query('DELETE FROM sessions WHERE token_hash=$1', [sha(rawToken)]); }
@@ -90,10 +96,10 @@ export async function checkCurrentPassword(db: Db, orgId: string, userId: string
   return !!r.rows[0]?.password_hash && verifyPassword(password, r.rows[0].password_hash);
 }
 
-export interface UserRow { id: string; name: string; email: string; role: Role; active: boolean; lockedUntil: string | null }
+export interface UserRow { id: string; name: string; email: string; role: Role; active: boolean; lockedUntil: string | null; mfaEnabled: boolean }
 export async function listUsers(db: Db, orgId: string): Promise<UserRow[]> {
-  const r = await db.query('SELECT id, name, email, role, active, locked_until FROM users WHERE organization_id=$1 ORDER BY name', [orgId]);
-  return r.rows.map((x) => ({ id: x.id, name: x.name, email: x.email, role: x.role, active: x.active, lockedUntil: x.locked_until ? new Date(x.locked_until).toISOString() : null }));
+  const r = await db.query('SELECT id, name, email, role, active, locked_until, (totp_enabled_at IS NOT NULL) AS mfa_enabled FROM users WHERE organization_id=$1 ORDER BY name', [orgId]);
+  return r.rows.map((x) => ({ id: x.id, name: x.name, email: x.email, role: x.role, active: x.active, lockedUntil: x.locked_until ? new Date(x.locked_until).toISOString() : null, mfaEnabled: x.mfa_enabled }));
 }
 
 /** Role/active changes. Refuses to leave the organization without an active ADMIN. Deactivation ends all sessions. */

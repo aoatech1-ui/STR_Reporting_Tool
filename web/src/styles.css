@@ -109,3 +109,8 @@ input[type=checkbox] { width: auto; } input:disabled, select:disabled { backgrou
   .proceeds, .doc-head, .doc th, .calc { -webkit-print-color-adjust: exact; print-color-adjust: exact; } .doc table, .calc, .proceeds { break-inside: avoid; }
   .card { box-shadow: none; border: 0; }
 }
+.recovery-codes { list-style: none; margin: 12px 0 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+.recovery-codes li { background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; } .recovery-codes code, .secret-key { font-family: ui-monospace, Menlo, Consolas, monospace; letter-spacing: .06em; }
+.secret-key { background: var(--surface-2); border: 1px solid var(--line); border-radius: 6px; padding: 2px 8px; word-break: break-all; }
+.qr { width: 192px; height: 192px; background: #fff; padding: 6px; border: 1px solid var(--line); border-radius: 10px; } .qr svg { width: 100%; height: 100%; display: block; }
+@media print { body.print-codes * { visibility: hidden; } body.print-codes .recovery-codes, body.print-codes .recovery-codes * { visibility: visible; } body.print-codes .recovery-codes { position: absolute; left: 0; top: 0; } }

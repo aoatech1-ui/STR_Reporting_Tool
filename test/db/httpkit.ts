@@ -1,3 +1,4 @@
+import { deriveMfaKeys } from '../../src/auth/mfa.ts';
 import type { FastifyInstance } from 'fastify';
 import { withTx, type Pool } from '../../src/db/pool.ts';
 import { createUser } from '../../src/repo/orgs.ts';
@@ -7,7 +8,7 @@ import type { Role } from '../../src/auth/permissions.ts';
 export const COST = { N: 1024, r: 8, p: 1 };
 export const PW = 'correct horse battery staple';
 export const testConfig = (o: Partial<AppConfig> = {}): AppConfig => ({ baseUrl: 'https://app.test', linkSecret: 'x'.repeat(40), cookieSecure: true, trustProxy: false,
-  allowedOrigins: ['https://app.test'], loginRateLimit: 1000, webhook: {}, scryptCost: COST, ...o });
+  allowedOrigins: ['https://app.test'], loginRateLimit: 1000, webhook: {}, scryptCost: COST, mfaKeys: deriveMfaKeys('test-mfa-master-key-0123456789abcdef'), ...o });
 
 /** Adds a user with a password to an existing org. */
 export async function addUser(pool: Pool, orgId: string, role: Role, email: string) {

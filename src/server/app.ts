@@ -14,6 +14,7 @@ import type { AppConfig } from './config.ts';
 import { makeGuard } from './guard.ts';
 import { accountingRoutes } from './routes/accounting.ts';
 import { authRoutes } from './routes/auth.ts';
+import { mfaRoutes } from './routes/mfa.ts';
 import { coreRoutes } from './routes/core.ts';
 import { publicRoutes } from './routes/public.ts';
 
@@ -51,7 +52,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
 
   app.setErrorHandler((err: any, req, reply) => {
     if (err instanceof ZodError) return reply.code(400).send({ error: 'Invalid request', issues: err.issues.map((i) => ({ path: i.path.join('.'), message: i.message })) });
-    if (err instanceof UserError) return reply.code(err.status).send({ error: err.message });
+    if (err instanceof UserError) return reply.code(err.status).send({ error: err.message, ...(err.code ? { code: err.code } : {}) });
     if (err?.code && PG_STATUS[err.code]) { const [s, m] = PG_STATUS[err.code]; return reply.code(s).send({ error: m }); }
     if (err?.code === 'P0001') return reply.code(422).send({ error: String(err.message) }); // raised by our DB integrity triggers
     if (err?.statusCode && err.statusCode < 500) return reply.code(err.statusCode).send({ error: err.statusCode === 429 ? 'Too many requests' : err.message });
@@ -76,7 +77,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     return reply.code(404).send({ error: 'Not found' });
   });
 
-  await app.register(async (a) => { await authRoutes(a, ctx); await coreRoutes(a, ctx); await accountingRoutes(a, ctx); });
+  await app.register(async (a) => { await authRoutes(a, ctx); await mfaRoutes(a, ctx); await coreRoutes(a, ctx); await accountingRoutes(a, ctx); });
   await app.register(async (a) => publicRoutes(a, ctx));
   return app;
 }

@@ -1,10 +1,11 @@
 import { createEmailProvider, type EmailSetup } from '../email/factory.ts';
 import { createWhatsAppProvider, type WhatsAppSetup } from '../whatsapp/factory.ts';
 import type { ScryptCost } from '../auth/password.ts';
+import { deriveMfaKeys, type MfaKeys } from '../auth/mfa.ts';
 
 export interface AppConfig {
   baseUrl: string; linkSecret: string; cookieSecure: boolean; trustProxy: boolean; allowedOrigins: string[];
-  loginRateLimit: number; webhook: { token?: string; signingSecret?: string }; scryptCost?: ScryptCost;
+  loginRateLimit: number; mfaKeys?: MfaKeys | null; webhook: { token?: string; signingSecret?: string }; scryptCost?: ScryptCost;
 }
 export interface Env { [k: string]: string | undefined }
 
@@ -22,6 +23,7 @@ export function loadConfig(env: Env): { databaseUrl: string; port: number; host:
       baseUrl, linkSecret, cookieSecure: url.protocol === 'https:', trustProxy: env.TRUST_PROXY === 'true',
       allowedOrigins: [url.origin, ...(env.ALLOWED_ORIGINS?.split(',').map((s) => s.trim()).filter(Boolean) ?? [])],
       loginRateLimit: Number(env.LOGIN_RATE_LIMIT) || 10,
+      mfaKeys: env.MFA_ENCRYPTION_KEY?.trim() ? deriveMfaKeys(env.MFA_ENCRYPTION_KEY.trim()) : null,
       webhook: { token: env.EMAIL_WEBHOOK_TOKEN, signingSecret: env.EMAIL_WEBHOOK_SECRET },
     },
     email: createEmailProvider(env),

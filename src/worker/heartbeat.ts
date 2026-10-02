@@ -5,12 +5,14 @@ import type { Pool } from '../db/pool.ts';
  * Timestamps use the database clock. Returns a stop function that removes the row (clean shutdown).
  */
 export function startHeartbeat(pool: Pool, workerId: string, everyMs = 10_000): () => Promise<void> {
-  const beat = () => pool.query(
+  let inflight: Promise<unknown> = Promise.resolve(), stopped = false;
+  const run = () => pool.query(
     `INSERT INTO worker_heartbeats(worker_id) VALUES ($1) ON CONFLICT (worker_id) DO UPDATE SET last_seen = now()`, [workerId])
     .then(() => pool.query(`DELETE FROM worker_heartbeats WHERE last_seen < now() - interval '1 day'`))
     .catch((e) => console.error(`heartbeat failed: ${(e as Error).message}`));
-  void beat();
+  const beat = () => { if (!stopped) inflight = run(); };
+  beat();
   const t = setInterval(beat, everyMs);
   t.unref();
-  return async () => { clearInterval(t); await pool.query('DELETE FROM worker_heartbeats WHERE worker_id=$1', [workerId]).catch(() => {}); };
+  return async () => { stopped = true; clearInterval(t); await inflight; await pool.query('DELETE FROM worker_heartbeats WHERE worker_id=$1', [workerId]).catch(() => {}); };
 }

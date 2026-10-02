@@ -18,8 +18,10 @@ export interface GuardDeps { pool: Pool; config: AppConfig; now: () => Date }
  * Route guard factory. Order: session → Origin → CSRF token → permission.
  * 401 = not signed in, 403 = signed in but not allowed (or failed CSRF/Origin).
  */
+export interface GuardOpts { /** Routes a user who still has to enrol in two-factor login may use (enrolment itself, sign-out, who-am-I). */ allowMfaEnrollment?: boolean }
+
 export function makeGuard(d: GuardDeps) {
-  return (perm: Permission) => async (req: FastifyRequest, _reply: FastifyReply) => {
+  return (perm: Permission, opts: GuardOpts = {}) => async (req: FastifyRequest, _reply: FastifyReply) => {
     const raw = req.cookies?.[SESSION_COOKIE];
     const session = raw ? await getSession(d.pool, raw, d.now()) : null;
     if (!session) throw new UserError('Authentication required', 401);
@@ -30,6 +32,9 @@ export function makeGuard(d: GuardDeps) {
       if (typeof tok !== 'string' || !eq(tok, session.csrf)) throw new UserError('Missing or invalid CSRF token', 403);
     }
     if (!can(session.role, perm)) throw new UserError('You do not have permission to do that', 403);
+    if (session.mfaEnrollmentRequired && !opts.allowMfaEnrollment) {
+      throw new UserError('Your organization requires two-factor login. Set it up to continue.', 403, 'MFA_ENROLLMENT_REQUIRED');
+    }
     req.auth = session;
   };
 }

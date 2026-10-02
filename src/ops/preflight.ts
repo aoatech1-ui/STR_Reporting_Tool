@@ -65,6 +65,20 @@ export async function runPreflight(env: Record<string, string | undefined>, pool
     const { orgs, admins } = r.rows[0];
     add('administrator', admins > 0 ? 'pass' : 'fail', admins > 0 ? `${admins} active administrator(s), ${orgs} organization(s)` : 'no active administrator: run "npm run create-admin"');
   });
+  await guard('two-factor login', async () => {
+    const key = env.MFA_ENCRYPTION_KEY?.trim();
+    const r = await pool.query(`SELECT (SELECT count(*)::int FROM users WHERE totp_enabled_at IS NOT NULL) AS enrolled,
+      (SELECT count(*)::int FROM users WHERE role='ADMIN' AND active AND totp_enabled_at IS NULL) AS admins_without,
+      (SELECT count(*)::int FROM organizations WHERE require_mfa) AS required`);
+    const { enrolled, admins_without, required } = r.rows[0];
+    if (key && key.length < 32) { add('two-factor login', 'fail', 'MFA_ENCRYPTION_KEY must be at least 32 characters'); return; }
+    if (!key) {
+      if (enrolled > 0 || required > 0) add('two-factor login', 'fail', `${enrolled} user(s) have two-factor login but MFA_ENCRYPTION_KEY is not set: they cannot sign in. Restore the original key.`);
+      else add('two-factor login', 'warn', 'not available: set MFA_ENCRYPTION_KEY (openssl rand -base64 48) to let people turn on two-factor login');
+      return;
+    }
+    add('two-factor login', admins_without > 0 ? 'warn' : 'pass', `${enrolled} user(s) enrolled; ${required} organization(s) require it${admins_without > 0 ? `; ${admins_without} administrator(s) have not turned it on` : ''}`);
+  });
   await guard('audit log', async () => {
     const orgs = (await pool.query('SELECT id FROM organizations')).rows;
     for (const x of orgs) { const broken = await verifyAuditChain(pool, x.id); if (broken !== null) { add('audit log', 'fail', `hash chain broken at entry #${broken} for organization ${x.id}`); return; } }

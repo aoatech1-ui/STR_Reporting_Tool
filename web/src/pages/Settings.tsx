@@ -2,7 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { api } from '../api';
 import { useSession } from '../auth';
 import { fmtDateTime } from '../format';
-import { Badge, Card, Empty, Field, Loaded, Modal, Note, Page, StatusBadge, useAction, useLoad, useToast } from '../ui';
+import { Badge, Card, ConfirmButton, Empty, Field, Loaded, Modal, Note, Page, StatusBadge, useAction, useLoad, useToast } from '../ui';
 
 const ROLES = ['ADMIN', 'MANAGER', 'ACCOUNTANT', 'VIEWER'];
 const ROLE_HELP: Record<string, string> = { ADMIN: 'Everything, including users', MANAGER: 'Everything except users', ACCOUNTANT: 'Expenses, imports, review, audit log', VIEWER: 'Read-only' };
@@ -32,10 +32,10 @@ function Users() {
   return (<Card title="Users" actions={<button className="btn primary sm" onClick={() => setAdding(true)}>Add user</button>} flush>
     {error && <div className="alert bad" role="alert" style={{ margin: 14 }}>{error}</div>}
     <Loaded q={q}>{(d) => <table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th /></tr></thead><tbody>
-      {d.users.map((u: any) => <tr key={u.id}><td>{u.name}{u.id === user?.id && <> <Badge>you</Badge></>}</td><td>{u.email}</td>
+      {d.users.map((u: any) => <tr key={u.id}><td>{u.name}{u.id === user?.id && <> <Badge>you</Badge></>} {u.mfaEnabled ? <Badge tone="good">2FA</Badge> : <Badge tone="neutral">No 2FA</Badge>}</td><td>{u.email}</td>
         <td><select value={u.role} disabled={u.id === user?.id} onChange={(e) => patch(u.id, { role: e.target.value })} aria-label={`Role for ${u.name}`} style={{ width: 'auto' }}>{ROLES.map((r) => <option key={r} value={r}>{r.charAt(0) + r.slice(1).toLowerCase()}</option>)}</select></td>
         <td><StatusBadge status={u.active ? 'ACTIVE' : 'INACTIVE'} />{u.lockedUntil && new Date(u.lockedUntil) > new Date() && <> <Badge tone="warn">Locked</Badge></>}</td>
-        <td className="r"><button className="btn sm" onClick={() => setReset(u)}>Reset password</button> {u.id !== user?.id && <button className="btn sm" onClick={() => patch(u.id, { active: !u.active })}>{u.active ? 'Deactivate' : 'Reactivate'}</button>}</td></tr>)}</tbody></table>}</Loaded>
+        <td className="r"><button className="btn sm" onClick={() => setReset(u)}>Reset password</button> {u.mfaEnabled && u.id !== user?.id && <><ConfirmButton className="btn sm" label="Reset 2FA" confirm={`Remove two-factor login for ${u.name}? They will be signed out and can set it up again.`} onConfirm={async () => { if (await run(async () => { await api.post(`/api/users/${u.id}/mfa/reset`); return true; })) { toast('Two-factor login reset'); q.reload(); } }} /> </>}{u.id !== user?.id && <button className="btn sm" onClick={() => patch(u.id, { active: !u.active })}>{u.active ? 'Deactivate' : 'Reactivate'}</button>}</td></tr>)}</tbody></table>}</Loaded>
     <div style={{ padding: '10px 18px' }} className="muted small">{ROLES.map((r) => <div key={r}><b>{r.charAt(0) + r.slice(1).toLowerCase()}:</b> {ROLE_HELP[r]}</div>)}</div>
     {adding && <Modal title="Add user" onClose={() => setAdding(false)}><form onSubmit={async (e) => { e.preventDefault(); if (await run(async () => { await api.post('/api/users', nv); return true; })) { setAdding(false); toast('User added'); q.reload(); setNv({ name: '', email: '', role: 'MANAGER', password: '' }); } }}>
       {error && <div className="alert bad" role="alert">{error}</div>}

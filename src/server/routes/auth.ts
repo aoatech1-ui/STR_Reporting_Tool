@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { withTx } from '../../db/pool.ts';
 import { GRANTS } from '../../auth/permissions.ts';
 import { UserError } from '../../errors.ts';
+import { completeChallenge, createChallenge, requireKeys, adminResetMfa } from '../../repo/mfa.ts';
 import { authenticate, checkCurrentPassword, createSession, deleteSession, listUsers, setPassword, updateUser, SESSION_ABSOLUTE_MS } from '../../repo/auth.ts';
 import { createUser } from '../../repo/orgs.ts';
 import { getJobStats, getWorkerStatus } from '../../repo/ops.ts';
@@ -14,24 +15,45 @@ const Role = z.enum(['ADMIN', 'MANAGER', 'ACCOUNTANT', 'VIEWER']);
 export async function authRoutes(app: FastifyInstance, c: Ctx) {
   const cookieOpts = { httpOnly: true, secure: c.config.cookieSecure, sameSite: 'strict' as const, path: '/' };
 
+  const publicUser = (u: { id: string; name: string; email: string; role: keyof typeof GRANTS }) => ({ id: u.id, name: u.name, email: u.email, role: u.role });
+  const startSession = async (user: Parameters<typeof createSession>[1], req: { ip: string; headers: { 'user-agent'?: string } }, reply: { setCookie: Function }, now: Date) => {
+    const s = await withTx(c.pool, (tx) => createSession(tx, user, now, { ip: req.ip, userAgent: req.headers['user-agent'] }));
+    reply.setCookie(SESSION_COOKIE, s.token, { ...cookieOpts, maxAge: SESSION_ABSOLUTE_MS / 1000 });
+    return s;
+  };
+
   app.post('/api/auth/login', { config: { rateLimit: { max: c.config.loginRateLimit, timeWindow: '1 minute' } } }, async (req, reply) => {
     const body = z.object({ email: z.string().max(320), password: z.string().min(1).max(256) }).strict().parse(req.body);
     const now = c.now();
-    const user = await authenticate(c.pool, body.email, body.password, now, c.config.scryptCost);
-    const s = await withTx(c.pool, (tx) => createSession(tx, user, now, { ip: req.ip, userAgent: req.headers['user-agent'] }));
-    reply.setCookie(SESSION_COOKIE, s.token, { ...cookieOpts, maxAge: SESSION_ABSOLUTE_MS / 1000 });
-    return { user: { id: user.id, name: user.name, email: user.email, role: user.role }, permissions: [...GRANTS[user.role]], csrfToken: s.csrf };
+    const { user, mfaRequired } = await authenticate(c.pool, body.email, body.password, now, c.config.scryptCost);
+    if (mfaRequired) {
+      requireKeys(c.config.mfaKeys); // never fall back to password-only when the user has a second factor
+      const challenge = await withTx(c.pool, (tx) => createChallenge(tx, user.id, now, req.ip));
+      return { mfaRequired: true, challenge };
+    }
+    const s = await startSession(user, req, reply, now);
+    return { user: publicUser(user), permissions: [...GRANTS[user.role]], csrfToken: s.csrf, mfa: { enabled: false, enrollmentRequired: await orgRequiresMfa(user.orgId) } };
   });
 
-  app.post('/api/auth/logout', { preHandler: c.guard('read') }, async (req, reply) => {
+  const orgRequiresMfa = async (orgId: string) => (await c.pool.query('SELECT require_mfa FROM organizations WHERE id=$1', [orgId])).rows[0]?.require_mfa === true;
+
+  app.post('/api/auth/mfa/verify', { config: { rateLimit: { max: c.config.loginRateLimit, timeWindow: '1 minute' } } }, async (req, reply) => {
+    const body = z.object({ challenge: z.string().min(10).max(200), code: z.string().min(1).max(64) }).strict().parse(req.body);
+    const now = c.now();
+    const user = await completeChallenge(c.pool, requireKeys(c.config.mfaKeys), body.challenge, body.code, now);
+    const s = await startSession(user, req, reply, now);
+    return { user: publicUser(user), permissions: [...GRANTS[user.role]], csrfToken: s.csrf, mfa: { enabled: true, enrollmentRequired: false } };
+  });
+
+  app.post('/api/auth/logout', { preHandler: c.guard('read', { allowMfaEnrollment: true }) }, async (req, reply) => {
     await deleteSession(c.pool, req.cookies[SESSION_COOKIE]!);
     reply.clearCookie(SESSION_COOKIE, cookieOpts);
     return { ok: true };
   });
 
-  app.get('/api/auth/me', { preHandler: c.guard('read') }, async (req) => {
+  app.get('/api/auth/me', { preHandler: c.guard('read', { allowMfaEnrollment: true }) }, async (req) => {
     const a = auth(req);
-    return { user: { id: a.id, name: a.name, email: a.email, role: a.role }, permissions: [...GRANTS[a.role]], csrfToken: a.csrf };
+    return { user: publicUser(a), permissions: [...GRANTS[a.role]], csrfToken: a.csrf, mfa: { enabled: a.mfaEnabled, enrollmentRequired: a.mfaEnrollmentRequired } };
   });
 
   app.post('/api/auth/change-password', { preHandler: c.guard('read'), config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, async (req) => {
@@ -65,6 +87,13 @@ export async function authRoutes(app: FastifyInstance, c: Ctx) {
     const { id } = z.object({ id: z.uuid() }).parse(req.params);
     const b = z.object({ newPassword: z.string().max(256) }).strict().parse(req.body);
     await withTx(c.pool, (tx) => setPassword(tx, a.orgId, a.id, id, b.newPassword, id === a.id ? a.sessionId : undefined, c.config.scryptCost));
+    return { ok: true };
+  });
+
+  app.post('/api/users/:id/mfa/reset', { preHandler: c.guard('users:manage') }, async (req) => {
+    const a = auth(req);
+    const { id } = z.object({ id: z.uuid() }).parse(req.params);
+    await withTx(c.pool, (tx) => adminResetMfa(tx, a.orgId, a.id, id));
     return { ok: true };
   });
 

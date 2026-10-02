@@ -1,12 +1,15 @@
 export class ApiError extends Error {
-  status: number; issues?: { path: string; message: string }[];
-  constructor(status: number, message: string, issues?: { path: string; message: string }[]) { super(message); this.status = status; this.issues = issues; }
+  status: number; code?: string; issues?: { path: string; message: string }[];
+  constructor(status: number, message: string, issues?: { path: string; message: string }[], code?: string) { super(message); this.status = status; this.issues = issues; this.code = code; }
 }
 
 let csrf = '';
 export const setCsrf = (t: string) => { csrf = t; };
 let onUnauthorized: () => void = () => {};
 export const setUnauthorizedHandler = (f: () => void) => { onUnauthorized = f; };
+
+let onMfaRequired: () => void = () => {};
+export const setMfaRequiredHandler = (f: () => void) => { onMfaRequired = f; };
 
 async function request<T = any>(method: string, url: string, body?: unknown, raw?: File): Promise<T> {
   const res = await fetch(url, {
@@ -18,10 +21,11 @@ async function request<T = any>(method: string, url: string, body?: unknown, raw
   let data: any = null;
   try { data = text ? JSON.parse(text) : null; } catch { /* not json */ }
   if (!res.ok) {
-    if (res.status === 401 && !url.startsWith('/api/auth/login')) onUnauthorized();
+    if (res.status === 401 && !url.startsWith('/api/auth/login') && !url.startsWith('/api/auth/mfa/verify')) onUnauthorized();
     const issues = data?.issues as ApiError['issues'];
     const detail = issues?.length ? `${data.error}: ${issues.map((i) => `${i.path || 'value'} ${i.message}`).join('; ')}` : (data?.error ?? `Request failed (${res.status})`);
-    throw new ApiError(res.status, detail, issues);
+    if (data?.code === 'MFA_ENROLLMENT_REQUIRED') onMfaRequired();
+    throw new ApiError(res.status, detail, issues, data?.code);
   }
   return data as T;
 }
@@ -29,6 +33,7 @@ async function request<T = any>(method: string, url: string, body?: unknown, raw
 export const api = {
   get: <T = any>(url: string) => request<T>('GET', url),
   post: <T = any>(url: string, body: unknown = {}) => request<T>('POST', url, body),
+  put: <T = any>(url: string, body: unknown) => request<T>('PUT', url, body),
   patch: <T = any>(url: string, body: unknown) => request<T>('PATCH', url, body),
   del: <T = any>(url: string) => request<T>('DELETE', url),
   /** Sends a file as the raw request body (receipts). The server decides the real type from the bytes. */

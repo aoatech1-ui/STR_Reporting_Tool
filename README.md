@@ -188,6 +188,11 @@ Check a setup with `npm run whatsapp:test -- --verify-only` (and `-- +1555123456
 * Errors are classified by provider code (rate limits retried; bad token, unapproved template, number not on WhatsApp fail at once with a plain-language reason).
 * Verified with mocked HTTP, locally generated signatures and a browser test; **not yet exercised against live Meta/Twilio accounts** (see the guide).
 
+## Two-factor login (added)
+
+TOTP authenticator codes + 10 one-time recovery codes, optional per user or required for the whole organization; admin reset; audited. Needs `MFA_ENCRYPTION_KEY`.
+Details, operations and the security properties: **[docs/two-factor.md](docs/two-factor.md)**.
+
 ## Design decisions
 
 - **Not dependent on Airbnb API.** Airbnb's API is gated by program/scope approval and its terms restrict retaining and analysing
