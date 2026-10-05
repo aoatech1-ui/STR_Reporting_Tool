@@ -292,6 +292,42 @@ describe('browser: manager UI end to end', { skip: E2E_SKIP, timeout: 180_000 },
     await shot('14-integrations');
   });
 
+  test('month-end: live checklist on the close page; reminder schedule, test send through the worker, personal opt-out', async () => {
+    await page.goto(`${base}/close?ym=2026-09`);
+    const cl = page.getByRole('list', { name: 'Month-end checklist' });
+    await cl.getByText('Statements finalized').waitFor();
+    await cl.getByText('Airbnb earnings imported').waitFor();
+    await page.goto(`${base}/settings`);
+    const card = page.locator('.card', { has: page.getByRole('heading', { name: /Month-end reminders/ }) });
+    await card.getByText('Off', { exact: true }).waitFor();
+    await card.getByLabel('Send month-end reminders').check();
+    await card.getByRole('group', { name: 'Day of the next month' }).getByRole('button', { name: '3rd' }).click();
+    await card.getByLabel('Time zone').selectOption('America/New_York');
+    await card.getByRole('button', { name: 'Save schedule' }).click();
+    await page.getByText('Reminder schedule saved').waitFor();
+    await card.getByText('On', { exact: true }).waitFor();
+    assert.equal(await card.getByRole('button', { name: '3rd' }).getAttribute('aria-pressed'), 'true');
+    assert.ok(await card.getByRole('heading', { name: 'Next reminders' }).locator('..').locator('li').count() >= 1, 'upcoming reminders listed');
+    await card.getByText('maria@example.com').waitFor(); // recipients
+    const before = sent.length;
+    await card.getByRole('button', { name: 'Send me a test' }).click();
+    await page.getByText(/Test reminder queued for maria@example.com/).waitFor();
+    const h = buildHandlers({ pool, files, email: emailProvider, whatsapp: waProvider, linkSecret: 'x'.repeat(40), baseUrl: base });
+    while (await runOnce(pool, h)) { /* drain */ }
+    const mail = sent.slice(before).find((m) => m.subject.startsWith('[Test]'));
+    assert.ok(mail, 'test reminder emailed'); assert.deepEqual(mail.to, ['maria@example.com']);
+    assert.match(mail.text, /\/close\?ym=\d{4}-\d{2}/);
+    await page.reload();
+    await card.getByRole('cell', { name: 'Test' }).waitFor();
+    await card.getByText('1 recipient').waitFor();
+    await shot('16-reminders');
+    await page.getByLabel(/Email me month-end reminders/).uncheck();
+    await page.getByText('Month-end reminders turned off for you').waitFor();
+    await page.reload();
+    assert.equal(await page.getByLabel(/Email me month-end reminders/).isChecked(), false);
+    assert.equal(await card.getByText('maria@example.com').count(), 0, 'no longer a recipient');
+  });
+
   test('viewer role: read-only UI, no action buttons, API refuses writes', async () => {
     const vctx = await browser.newContext({ viewport: { width: 1200, height: 800 } });
     const vp = await vctx.newPage();

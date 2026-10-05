@@ -113,7 +113,7 @@ describe('browser: two-factor login', { skip: E2E_SKIP, timeout: 120_000 }, () =
     await page.getByRole('button', { name: 'Require for everyone' }).click();
     await page.getByText('Required for everyone').waitFor();
     await page.goto(`${base}/settings`);
-    await page.getByText('Mo Manager').waitFor();
+    await page.getByRole('row', { name: /Mo Manager/ }).waitFor();
     await shot('23-users-2fa');
     const row = page.getByRole('row', { name: /Ada Admin/ });
     await row.getByText('2FA', { exact: true }).waitFor();

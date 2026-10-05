@@ -14,6 +14,7 @@ import { STATEMENT_FILES_JOB } from '../services/close.ts';
 import { DELIVERY_JOB, ownerTarget } from '../services/send.ts';
 import { getOwner } from '../repo/owners.ts';
 import type { Handler, Job } from './queue.ts';
+import { REMINDER_JOB, reminderHandler } from '../services/reminders.ts';
 
 export interface DeliveryDeps { pool: Pool; files: FileStore; email: EmailProvider | null; whatsapp: WhatsAppProvider | null; linkSecret: string; baseUrl: string; now?: () => number; whatsappIncludeSummary?: boolean }
 
@@ -99,4 +100,4 @@ export function statementFilesHandler(d: DeliveryDeps): Handler {
   };
 }
 
-export const buildHandlers = (d: DeliveryDeps): Record<string, Handler> => ({ [DELIVERY_JOB]: deliveryHandler(d), [STATEMENT_FILES_JOB]: statementFilesHandler(d) });
+export const buildHandlers = (d: DeliveryDeps): Record<string, Handler> => ({ [DELIVERY_JOB]: deliveryHandler(d), [STATEMENT_FILES_JOB]: statementFilesHandler(d), [REMINDER_JOB]: reminderHandler(d) });

@@ -24,8 +24,8 @@ test('password policy: length, reuse of email name, repetition', () => {
 
 test('permission matrix', () => {
   const expected: Record<Role, Permission[]> = {
-    ADMIN: ['read', 'owners:write', 'properties:write', 'commission:write', 'expenses:write', 'import:write', 'period:review', 'period:finalize', 'statements:send', 'audit:read', 'users:manage', 'settings:view'],
-    MANAGER: ['read', 'owners:write', 'properties:write', 'commission:write', 'expenses:write', 'import:write', 'period:review', 'period:finalize', 'statements:send', 'audit:read', 'settings:view'],
+    ADMIN: ['read', 'owners:write', 'properties:write', 'commission:write', 'expenses:write', 'import:write', 'period:review', 'period:finalize', 'statements:send', 'audit:read', 'users:manage', 'settings:view', 'reminders:manage'],
+    MANAGER: ['read', 'owners:write', 'properties:write', 'commission:write', 'expenses:write', 'import:write', 'period:review', 'period:finalize', 'statements:send', 'audit:read', 'settings:view', 'reminders:manage'],
     ACCOUNTANT: ['read', 'expenses:write', 'import:write', 'period:review', 'audit:read'],
     VIEWER: ['read'],
   };

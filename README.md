@@ -193,6 +193,12 @@ Check a setup with `npm run whatsapp:test -- --verify-only` (and `-- +1555123456
 TOTP authenticator codes + 10 one-time recovery codes, optional per user or required for the whole organization; admin reset; audited. Needs `MFA_ENCRYPTION_KEY`.
 Details, operations and the security properties: **[docs/two-factor.md](docs/two-factor.md)**.
 
+## Month-end reminders (added)
+
+Scheduled emails to the team with a live checklist (import, expenses/receipts, finalize, send), in the organization's time zone, with an optional due date;
+skipped when the month is done; exactly-once per reminder; test send; per-person opt-out; history. They report only: nothing is finalized or sent automatically.
+The same checklist is shown on Monthly close. Details: **[docs/month-end-reminders.md](docs/month-end-reminders.md)**.
+
 ## Design decisions
 
 - **Not dependent on Airbnb API.** Airbnb's API is gated by program/scope approval and its terms restrict retaining and analysing

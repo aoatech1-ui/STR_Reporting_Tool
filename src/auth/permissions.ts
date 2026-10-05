@@ -2,9 +2,9 @@ export type Role = 'ADMIN' | 'MANAGER' | 'ACCOUNTANT' | 'VIEWER';
 
 export type Permission =
   | 'read' | 'owners:write' | 'properties:write' | 'commission:write' | 'expenses:write' | 'import:write'
-  | 'period:review' | 'period:finalize' | 'statements:send' | 'audit:read' | 'users:manage' | 'settings:view';
+  | 'period:review' | 'period:finalize' | 'statements:send' | 'audit:read' | 'users:manage' | 'settings:view' | 'reminders:manage';
 
-const ALL: Permission[] = ['read', 'owners:write', 'properties:write', 'commission:write', 'expenses:write', 'import:write', 'period:review', 'period:finalize', 'statements:send', 'audit:read', 'users:manage', 'settings:view'];
+const ALL: Permission[] = ['read', 'owners:write', 'properties:write', 'commission:write', 'expenses:write', 'import:write', 'period:review', 'period:finalize', 'statements:send', 'audit:read', 'users:manage', 'settings:view', 'reminders:manage'];
 
 /** Single source of truth for who may do what. Routes declare a permission; they never check roles directly. */
 export const GRANTS: Record<Role, ReadonlySet<Permission>> = {

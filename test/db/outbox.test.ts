@@ -19,7 +19,8 @@ describe('outbox + worker', { skip }, () => {
   before(async () => { ({ pool, close } = await freshDb()); });
   after(async () => { await close(); });
 
-  const clock = { t: Date.parse('2026-10-05T12:00:00Z') };
+  // Jobs are enqueued with the database clock, and runOnce claims against this test clock, so it must never be behind real time.
+  const clock = { t: Math.max(Date.parse('2026-10-05T12:00:00Z'), Date.now() + 60_000) };
   const now = () => new Date(clock.t);
   const mkEmail = (script: (n: number) => Error | void) => {
     const sent: any[] = []; let n = 0;

@@ -3,6 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { api } from '../api';
 import { useSession } from '../auth';
 import { currentYm, fmtMonth } from '../format';
+import { LiveChecklist } from './Reminders';
 import { Badge, Card, Empty, Loaded, Modal, Money, MonthPicker, Note, Page, StatusBadge, useAction, useLoad, useToast } from '../ui';
 
 export function Close() {
@@ -43,15 +44,11 @@ export function Close() {
           <div className="toolbar"><span>Status:</span> <StatusBadge status={status} /> {closed && <span className="muted small">Figures are locked. Corrections are made with adjustments in an open month.</span>}</div>
           {error && <div className="alert bad" role="alert">{error}</div>}
 
-          {!closed && <Card title="Checklist">
-            <ol style={{ margin: 0, paddingLeft: 20, lineHeight: 1.9 }}>
-              <li><Link to="/import">Import Airbnb earnings</Link> and resolve unmatched listings</li>
-              <li><Link to={`/expenses?ym=${ym}`}>Enter and review expenses</Link> for {fmtMonth(ym)}</li>
-              <li>Generate the review below: calculates commission and owner proceeds for every property</li>
-              <li>Resolve exceptions, then finalize</li>
-            </ol>
-            {can('period:review') && <div className="actions" style={{ marginTop: 14 }}><button className="btn primary" onClick={generate} disabled={busy}>{busy ? 'Working…' : d.statements.length ? 'Refresh review' : 'Generate review'}</button></div>}
-          </Card>}
+          <Card title="Checklist">
+            <LiveChecklist ym={ym} version={d} />
+            {!closed && can('period:review') && <div className="actions" style={{ marginTop: 14 }}><button className="btn primary" onClick={generate} disabled={busy}>{busy ? 'Working…' : d.statements.length ? 'Refresh review' : 'Generate review'}</button>
+              <span className="muted small">Calculates commission and owner proceeds for every property.</span></div>}
+          </Card>
 
           {exceptions && exceptions.length > 0 && <Card title={<>Exceptions <Badge tone={critical.length ? 'bad' : 'warn'}>{exceptions.length}</Badge></>} flush>
             {exceptions.map((e, i) => <div className="exc" key={i}><StatusBadge status={e.severity} /><span>{e.message}</span></div>)}</Card>}

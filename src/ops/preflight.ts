@@ -79,6 +79,13 @@ export async function runPreflight(env: Record<string, string | undefined>, pool
     }
     add('two-factor login', admins_without > 0 ? 'warn' : 'pass', `${enrolled} user(s) enrolled; ${required} organization(s) require it${admins_without > 0 ? `; ${admins_without} administrator(s) have not turned it on` : ''}`);
   });
+  await guard('month-end reminders', async () => {
+    const r = await pool.query(`SELECT count(*)::int AS n FROM reminder_settings WHERE enabled`);
+    const n = r.rows[0].n;
+    if (!n) return; // feature not in use: nothing to report
+    if (!cfg?.email) add('month-end reminders', 'warn', `on for ${n} organization(s) but no email provider is configured: reminders will fail`);
+    else add('month-end reminders', 'pass', `on for ${n} organization(s); sent by the worker`);
+  });
   await guard('audit log', async () => {
     const orgs = (await pool.query('SELECT id FROM organizations')).rows;
     for (const x of orgs) { const broken = await verifyAuditChain(pool, x.id); if (broken !== null) { add('audit log', 'fail', `hash chain broken at entry #${broken} for organization ${x.id}`); return; } }

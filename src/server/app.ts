@@ -15,6 +15,7 @@ import { makeGuard } from './guard.ts';
 import { accountingRoutes } from './routes/accounting.ts';
 import { authRoutes } from './routes/auth.ts';
 import { mfaRoutes } from './routes/mfa.ts';
+import { reminderRoutes } from './routes/reminders.ts';
 import { coreRoutes } from './routes/core.ts';
 import { publicRoutes } from './routes/public.ts';
 
@@ -77,7 +78,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     return reply.code(404).send({ error: 'Not found' });
   });
 
-  await app.register(async (a) => { await authRoutes(a, ctx); await mfaRoutes(a, ctx); await coreRoutes(a, ctx); await accountingRoutes(a, ctx); });
+  await app.register(async (a) => { await authRoutes(a, ctx); await mfaRoutes(a, ctx); await reminderRoutes(a, ctx); await coreRoutes(a, ctx); await accountingRoutes(a, ctx); });
   await app.register(async (a) => publicRoutes(a, ctx));
   return app;
 }

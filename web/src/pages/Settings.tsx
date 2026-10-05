@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { api } from '../api';
 import { useSession } from '../auth';
 import { fmtDateTime } from '../format';
+import { MyReminderPreference, RemindersCard } from './Reminders';
 import { Badge, Card, ConfirmButton, Empty, Field, Loaded, Modal, Note, Page, StatusBadge, useAction, useLoad, useToast } from '../ui';
 
 const ROLES = ['ADMIN', 'MANAGER', 'ACCOUNTANT', 'VIEWER'];
@@ -54,8 +55,9 @@ export function SettingsPage() {
   const cats = useLoad(() => api.get('/api/expense-categories'), []);
   return (
     <Page title="Settings">
-      <Card title="Your account"><dl className="dl"><dt>Name</dt><dd>{user?.name}</dd><dt>Email</dt><dd>{user?.email}</dd><dt>Role</dt><dd>{user?.role}</dd></dl></Card>
+      <Card title="Your account"><dl className="dl"><dt>Name</dt><dd>{user?.name}</dd><dt>Email</dt><dd>{user?.email}</dd><dt>Role</dt><dd>{user?.role}</dd></dl><div style={{ marginTop: 14 }}><MyReminderPreference /></div></Card>
       <ChangePassword />
+      {can('settings:view') && <RemindersCard />}
       {can('users:manage') ? <Users /> : <Note>User management is available to administrators.</Note>}
       <Card title="Expense categories"><Loaded q={cats}>{(d) => <div className="chips" style={{ marginBottom: 0 }}>{d.categories.map((c: any) => <span className="chip" key={c.id}>{c.name}</span>)}</div>}</Loaded><p className="muted small" style={{ marginBottom: 0 }}>Type a new name when adding an expense to create a custom category.</p></Card>
     </Page>
