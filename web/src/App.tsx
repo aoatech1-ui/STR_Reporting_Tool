@@ -14,6 +14,7 @@ import { Annual } from './pages/Annual';
 import { Communications, Integrations } from './pages/Communications';
 import { SettingsPage, AuditLog } from './pages/Settings';
 import { SecurityPage } from './pages/Security';
+import { RecurringList, RecurringDetail } from './pages/Recurring';
 import { OwnerView } from './pages/OwnerView';
 
 function Shell() {
@@ -30,7 +31,7 @@ function Shell() {
           {mfa.enrollmentRequired ? link('/security', 'Security') : <>
           {link('/', 'Dashboard')}
           <div className="nav-group">Accounting</div>{link('/close', 'Monthly close')}{link('/statements', 'Statements')}{link('/annual', 'Annual reports')}
-          <div className="nav-group">Data</div>{link('/revenue', 'Revenue')}{link('/import', 'Airbnb import')}{link('/expenses', 'Expenses')}
+          <div className="nav-group">Data</div>{link('/revenue', 'Revenue')}{link('/import', 'Airbnb import')}{link('/expenses', 'Expenses')}{link('/recurring', 'Recurring expenses')}
           <div className="nav-group">Portfolio</div>{link('/owners', 'Owners')}{link('/properties', 'Properties')}{link('/commission', 'Commission settings')}
           <div className="nav-group">System</div>{link('/communications', 'Communications')}{link('/integrations', 'Integrations')}
           {can('audit:read') && link('/audit', 'Audit log')}{link('/security', 'Security')}{link('/settings', 'Settings')}</>}
@@ -56,6 +57,7 @@ export function App() {
         <Route path="commission" element={<CommissionPage />} />
         <Route path="revenue" element={<Revenue />} /><Route path="import" element={<ImportPage />} />
         <Route path="expenses" element={<Expenses />} /><Route path="expenses/:id" element={<ExpenseDetail />} />
+        <Route path="recurring" element={<RecurringList />} /><Route path="recurring/:id" element={<RecurringDetail />} />
         <Route path="close" element={<Close />} />
         <Route path="statements" element={<StatementHistory />} /><Route path="statements/:id" element={<StatementPreview />} />
         <Route path="annual" element={<Annual />} />

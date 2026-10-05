@@ -67,7 +67,7 @@ export function Expenses() {
   const set = (o: Record<string, string>) => setSp({ ym, propertyId, ...o });
   const props: any[] = meta.data?.properties ?? [];
   return (
-    <Page title="Expenses" sub={`Property expenses for ${fmtMonth(ym)}`} actions={can('expenses:write') && <button className="btn primary" disabled={!props.length} onClick={() => setAdding(true)}>Add expense</button>}>
+    <Page title="Expenses" sub={`Property expenses for ${fmtMonth(ym)}`} actions={can('expenses:write') && <><Link className="btn" to="/recurring">Recurring expenses</Link><button className="btn primary" disabled={!props.length} onClick={() => setAdding(true)}>Add expense</button></>}>
       <div className="toolbar">
         <MonthPicker value={ym} onChange={(v) => set({ ym: v })} />
         <label className="inline-field"><span>Property</span><select value={propertyId} onChange={(e) => set({ propertyId: e.target.value })}><option value="">All properties</option>{props.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
@@ -79,7 +79,7 @@ export function Expenses() {
               {d.expenses.map((e: any) => (
                 <tr key={e.id} className="click" onClick={() => nav(`/expenses/${e.id}`)}>
                   <td className="nowrap">{fmtDate(e.date)}</td><td>{props.find((p) => p.id === e.propertyId)?.name}</td><td>{e.category}</td><td><Link to={`/expenses/${e.id}`} onClick={(x) => x.stopPropagation()}>{e.vendor}</Link></td>
-                  <td>{e.description}{e.ownerPaid && <> <Badge tone="info">Owner-paid</Badge></>}</td><td>{e.receiptCount > 0 ? <Badge tone="good">{e.receiptCount === 1 ? '1 receipt' : `${e.receiptCount} receipts`}</Badge> : (!e.reverses && e.amountCents + e.taxCents >= d.receiptThresholdCents ? <Badge tone="warn">Missing</Badge> : <span className="muted">—</span>)}</td><td className="r"><Money cents={e.amountCents + e.taxCents} /></td></tr>))}</tbody>
+                  <td>{e.description}{e.ownerPaid && <> <Badge tone="info">Owner-paid</Badge></>}{e.recurringExpenseId && <> <Badge tone="accent">Recurring</Badge></>}</td><td>{e.receiptCount > 0 ? <Badge tone="good">{e.receiptCount === 1 ? '1 receipt' : `${e.receiptCount} receipts`}</Badge> : (!e.reverses && e.amountCents + e.taxCents >= d.receiptThresholdCents ? <Badge tone="warn">Missing</Badge> : <span className="muted">—</span>)}</td><td className="r"><Money cents={e.amountCents + e.taxCents} /></td></tr>))}</tbody>
               <tfoot><tr><td colSpan={6}>Charged to owners</td><td className="r"><Money cents={d.totals.chargedCents} /></td></tr>
                 {d.totals.ownerPaidCents > 0 && <tr><td colSpan={5} className="muted">Paid directly by owners (not deducted)</td><td /><td className="r"><Money cents={d.totals.ownerPaidCents} /></td></tr>}</tfoot></table>)}
         </Card>)}</Loaded>
@@ -114,6 +114,7 @@ export function ExpenseDetail() {
           <Card title={e.vendor} actions={<><Money cents={e.amountCents + e.taxCents} strong /> {e.ownerPaid && <Badge tone="info">Owner-paid</Badge>}</>}>
             <dl className="dl"><dt>Property</dt><dd>{properties.find((p) => p.id === e.propertyId)?.name}</dd><dt>Date</dt><dd>{fmtDate(e.date)}</dd><dt>Accounting month</dt><dd>{ym ? fmtMonth(ym) : '—'} {period && <StatusBadge status={period.status} />}</dd>
               <dt>Category</dt><dd>{e.category}</dd><dt>Description</dt><dd>{e.description || '—'}</dd><dt>Amount</dt><dd><Money cents={e.amountCents} /> {e.taxCents ? <span className="muted">+ <Money cents={e.taxCents} /> tax</span> : null}</dd>
+              {e.recurringExpenseId && <><dt>Recurring</dt><dd><Link to={`/recurring/${e.recurringExpenseId}`}>Posted from a recurring expense</Link></dd></>}
               {e.reverses && <><dt>Reverses</dt><dd><Link to={`/expenses/${e.reverses}`}>Original expense</Link></dd></>}<dt>Notes</dt><dd>{e.notes || '—'}</dd></dl>
             {can('expenses:write') && <div className="actions" style={{ marginTop: 16 }}>
               {open ? <><button className="btn" onClick={() => setEditing(true)}>Edit</button>

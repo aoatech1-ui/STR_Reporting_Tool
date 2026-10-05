@@ -13,7 +13,7 @@ export interface NewExpense {
   /** Accounting month override (YYYY-MM); defaults to the expense date's month. */
   accountingMonth?: string;
 }
-export interface ExpenseRow extends ExpenseInput { receiptCount: number; propertyId: string; ownerId: string; periodId: string; paymentMethod: string | null; notes: string | null; reverses: string | null }
+export interface ExpenseRow extends ExpenseInput { recurringExpenseId: string | null; receiptCount: number; propertyId: string; ownerId: string; periodId: string; paymentMethod: string | null; notes: string | null; reverses: string | null }
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 function validate(e: NewExpense) {
@@ -25,11 +25,17 @@ function validate(e: NewExpense) {
 
 const map = (x: any): ExpenseRow => ({ id: x.id, date: x.expense_date, vendor: x.vendor, description: x.description ?? '', category: x.category,
   amountCents: x.amount_cents, taxCents: x.tax_cents, ownerPaid: x.owner_paid, reimbursable: x.reimbursable, propertyId: x.property_id, ownerId: x.owner_id,
-  receiptCount: x.receipt_count ?? 0, periodId: x.accounting_period_id, paymentMethod: x.payment_method, notes: x.notes, reverses: x.reverses_expense_id });
+  receiptCount: x.receipt_count ?? 0, periodId: x.accounting_period_id, paymentMethod: x.payment_method, notes: x.notes, reverses: x.reverses_expense_id, recurringExpenseId: x.recurring_expense_id ?? null });
 
 const SELECT = `SELECT e.*, c.name AS category, (SELECT count(*)::int FROM expense_receipts r WHERE r.expense_id = e.id) AS receipt_count FROM expenses e JOIN expense_categories c ON c.id = e.category_id`;
 
-export async function createExpense(tx: Tx, orgId: string, userId: string, e: NewExpense): Promise<string> {
+export interface CreateOpts {
+  /** Who the audit entry names; null for automatic postings (the worker). Defaults to userId. */
+  auditUserId?: string | null;
+  recurringExpenseId?: string;
+}
+
+export async function createExpense(tx: Tx, orgId: string, userId: string, e: NewExpense, opts: CreateOpts = {}): Promise<string> {
   validate(e);
   const prop = await tx.query(`SELECT po.owner_id FROM properties p JOIN property_owners po ON po.property_id=p.id AND po.is_primary
     WHERE p.id=$1 AND p.organization_id=$2`, [e.propertyId, orgId]);
@@ -41,11 +47,12 @@ export async function createExpense(tx: Tx, orgId: string, userId: string, e: Ne
   const category = await getOrCreateCategory(tx, orgId, e.category);
   const r = await tx.query(
     `INSERT INTO expenses(organization_id, property_id, owner_id, accounting_period_id, category_id, expense_date, vendor, description, amount_cents, tax_cents,
-       payment_method, receipt_attachment_id, reimbursable, manager_paid, owner_paid, recurring, notes, created_by)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING id`,
+       payment_method, receipt_attachment_id, reimbursable, manager_paid, owner_paid, recurring, notes, created_by, recurring_expense_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19) RETURNING id`,
     [orgId, e.propertyId, prop.rows[0].owner_id, period.id, category, e.date, e.vendor.trim(), e.description ?? null, e.amountCents, e.taxCents ?? 0,
-      e.paymentMethod ?? null, e.receiptAttachmentId ?? null, e.reimbursable ?? false, !(e.ownerPaid ?? false), e.ownerPaid ?? false, e.recurring ?? false, e.notes ?? null, userId]);
-  await appendAudit(tx, orgId, { userId, action: 'EXPENSE_CREATED', entityType: 'expense', entityId: r.rows[0].id, oldValue: null, newValue: e });
+      e.paymentMethod ?? null, e.receiptAttachmentId ?? null, e.reimbursable ?? false, !(e.ownerPaid ?? false), e.ownerPaid ?? false, (e.recurring ?? false) || !!opts.recurringExpenseId, e.notes ?? null, userId, opts.recurringExpenseId ?? null]);
+  await appendAudit(tx, orgId, { userId: opts.auditUserId === undefined ? userId : opts.auditUserId, action: 'EXPENSE_CREATED', entityType: 'expense', entityId: r.rows[0].id, oldValue: null,
+    newValue: opts.recurringExpenseId ? { ...e, recurringExpenseId: opts.recurringExpenseId } : e });
   return r.rows[0].id;
 }
 

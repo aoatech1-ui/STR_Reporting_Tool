@@ -328,6 +328,40 @@ describe('browser: manager UI end to end', { skip: E2E_SKIP, timeout: 180_000 },
     assert.equal(await card.getByText('maria@example.com').count(), 0, 'no longer a recipient');
   });
 
+  test('recurring expenses: create, posted into this month automatically, skip next time, link from the expense', async () => {
+    await page.goto(`${base}/recurring`);
+    await page.getByText(/No recurring expenses yet/).waitFor();
+    await page.getByRole('button', { name: 'Add recurring expense' }).click();
+    const dlg = page.getByRole('dialog');
+    await dlg.getByLabel('Vendor').fill('City Water');
+    await dlg.getByLabel('Category').fill('Utilities');
+    await dlg.getByLabel('Amount ($)').fill('64.20');
+    await dlg.getByLabel('Repeats').selectOption({ label: 'Monthly' });
+    await dlg.getByLabel('On day').selectOption({ label: '1st' });
+    await dlg.getByRole('button', { name: 'Create' }).click();
+    await page.getByText(/Recurring expense created\. 1 expense posted/).waitFor();
+    await page.getByRole('heading', { name: 'Recurring expense' }).waitFor();
+    await page.getByText('Monthly, on the 1st').waitFor();
+    await shot('17-recurring-detail');
+    // skip the next month, then undo
+    const up = page.locator('.card', { has: page.getByRole('heading', { name: 'Upcoming' }) });
+    await up.getByRole('button', { name: /^Skip / }).first().click();
+    await page.getByText(/skipped$/).waitFor();
+    await up.getByText('Skipped').waitFor();
+    await up.getByRole('button', { name: 'Undo skip' }).click();
+    await page.getByText(/will be posted$/).waitFor();
+    // the posted expense is an ordinary expense in this month, linked back
+    await page.getByRole('link', { name: 'View expense' }).click();
+    await page.getByRole('link', { name: 'Posted from a recurring expense' }).waitFor();
+    assert.ok((await page.locator('.card').first().innerText()).includes('$64.20'));
+    const ym = new Date().toISOString().slice(0, 7);
+    await page.goto(`${base}/expenses?ym=${ym}`);
+    await page.getByRole('row', { name: /City Water/ }).getByText('Recurring').waitFor();
+    await page.goto(`${base}/recurring`);
+    await page.getByRole('row', { name: /City Water/ }).waitFor();
+    await shot('18-recurring-list');
+  });
+
   test('viewer role: read-only UI, no action buttons, API refuses writes', async () => {
     const vctx = await browser.newContext({ viewport: { width: 1200, height: 800 } });
     const vp = await vctx.newPage();

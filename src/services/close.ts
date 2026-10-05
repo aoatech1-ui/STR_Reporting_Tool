@@ -12,6 +12,7 @@ import { getOrCreatePeriod, setPeriodStatus, type PeriodRow } from '../repo/peri
 import { listManagedProperties, listRules } from '../repo/properties.ts';
 import { deleteDraftStatements, finalizeStatements, insertDraftStatement } from '../repo/statements.ts';
 import { UserError } from '../errors.ts';
+import { postMonth } from '../repo/recurring.ts';
 
 export const STATEMENT_FILES_JOB = 'generate_statement_files';
 
@@ -20,6 +21,8 @@ export interface DraftResult { statements: { id: string; statement: Statement }[
 /** Rebuilds all draft statements for an open period from source records. Pure function of DB state; deterministic. */
 async function generateInTx(tx: Tx, orgId: string, userId: string, period: PeriodRow): Promise<DraftResult> {
   assertEditable(period);
+  // Recurring expenses for this month are posted now if the worker has not done it yet (their day may not have come).
+  await postMonth(tx, orgId, period.year, period.month, userId);
   await deleteDraftStatements(tx, orgId, period.id);
   const exceptions: ExceptionItem[] = [];
   const out: DraftResult['statements'] = [];

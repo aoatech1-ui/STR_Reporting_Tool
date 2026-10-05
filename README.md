@@ -199,6 +199,12 @@ Scheduled emails to the team with a live checklist (import, expenses/receipts, f
 skipped when the month is done; exactly-once per reminder; test send; per-person opt-out; history. They report only: nothing is finalized or sent automatically.
 The same checklist is shown on Monthly close. Details: **[docs/month-end-reminders.md](docs/month-end-reminders.md)**.
 
+## Recurring expenses (added)
+
+Templates (monthly to yearly, any day, start/end month) that post ordinary expenses into their month: on their day by the worker, and for the whole month
+whenever it is reviewed or finalized; exactly once per month; never into a finalized month (recorded as skipped); skip / undo skip; stop; edits apply forward.
+Details: **[docs/recurring-expenses.md](docs/recurring-expenses.md)**.
+
 ## Design decisions
 
 - **Not dependent on Airbnb API.** Airbnb's API is gated by program/scope approval and its terms restrict retaining and analysing
